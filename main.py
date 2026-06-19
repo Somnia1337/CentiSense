@@ -1,5 +1,5 @@
 """
-EvalGuessr — Chess Position Evaluation Trainer
+CentiSense — Chess Position Evaluation Trainer
 
 A web application that presents random chess positions from a database,
 lets users judge the evaluation, and reveals Stockfish 18 analysis.
@@ -8,10 +8,12 @@ lets users judge the evaluation, and reveals Stockfish 18 analysis.
 import logging
 import random
 import re
+import select
 import subprocess
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -30,8 +32,8 @@ from fastapi.staticfiles import StaticFiles
 PGN_FILE = Path(__file__).parent / "database.pgn"
 POSITIONS_FILE = Path(__file__).parent / "positions.txt"
 STOCKFISH_PATH = "stockfish"
-STOCKFISH_DEPTH = 18
-STOCKFISH_TIMEOUT = 5.0  # seconds per position
+STOCKFISH_DEPTH = 20
+STOCKFISH_TIMEOUT = 12.0  # seconds per position
 
 # Pieces must be between MIN_PIECES and MAX_PIECES (inclusive)
 MIN_PIECES = 10
@@ -44,13 +46,13 @@ MIN_PLY = 12
 # ---------------------------------------------------------------------------
 
 CATEGORIES = [
-    ("white_winning", "白胜势", "White is winning", 300, 10_000),
-    ("white_big", "白大优", "White has big advantage", 150, 299),
-    ("white_slight", "白小优", "White has slight advantage", 50, 149),
-    ("equal", "均势", "Equal position", -49, 49),
-    ("black_slight", "黑小优", "Black has slight advantage", -149, -50),
-    ("black_big", "黑大优", "Black has big advantage", -299, -150),
-    ("black_winning", "黑胜势", "Black is winning", -10_000, -300),
+    ("white_winning", "White winning", "White is winning", 300, 10_000),
+    ("white_big", "White clear advantage", "White has big advantage", 150, 299),
+    ("white_slight", "White slight edge", "White has slight advantage", 50, 149),
+    ("equal", "Equal", "Equal position", -49, 49),
+    ("black_slight", "Black slight edge", "Black has slight advantage", -149, -50),
+    ("black_big", "Black clear advantage", "Black has big advantage", -299, -150),
+    ("black_winning", "Black winning", "Black is winning", -10_000, -300),
 ]
 
 CATEGORY_BY_KEY = {cat[0]: cat for cat in CATEGORIES}
@@ -71,13 +73,36 @@ def classify_eval(cp: int) -> str:
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
-log = logging.getLogger("evalguessr")
+log = logging.getLogger("CentiSense")
+
+# ---------------------------------------------------------------------------
+# Lifespan (must be defined before FastAPI app creation)
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown lifecycle."""
+
+    # Startup
+    def init_db():
+        build_position_database()
+
+    db_thread = threading.Thread(target=init_db, daemon=True)
+    db_thread.start()
+    engine.start()
+
+    yield
+
+    # Shutdown
+    engine.stop()
+
 
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="EvalGuessr", version="0.1.0")
+app = FastAPI(title="CentiSense", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
@@ -94,7 +119,7 @@ async def index():
     index_path = static_dir / "index.html"
     if index_path.exists():
         return HTMLResponse(index_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>EvalGuessr</h1><p>index.html not found.</p>")
+    return HTMLResponse("<h1>CentiSense</h1><p>index.html not found.</p>")
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +210,23 @@ class StockfishEngine:
                         "error": "Engine unavailable",
                     }
 
+            # Process is guaranteed alive here; capture stdout for type narrowing
+            stdout = self.process.stdout
+            assert stdout is not None
+
+            # Cancel any in-progress search (no-op if idle) and drain stale
+            # output from a previous timeout.  Without this, leftover
+            # "bestmove" / "info" lines from a prior search would pollute the
+            # pipe and cause the next evaluation to return wrong scores.
+            self._send("stop")
+            while True:
+                ready, _, _ = select.select([stdout], [], [], 0.05)
+                if not ready:
+                    break
+                line = stdout.readline()
+                if not line or line.strip().startswith("bestmove"):
+                    break
+
             # Send position and go command
             self._send(f"position fen {fen}")
             self._send(f"go depth {depth}")
@@ -196,9 +238,7 @@ class StockfishEngine:
             deadline = time.time() + timeout
 
             while time.time() < deadline:
-                if not self.process.stdout:
-                    break
-                line = self.process.stdout.readline()
+                line = stdout.readline()
                 if not line:
                     break
 
@@ -380,7 +420,9 @@ async def get_position():
     # Generate SVG board
     try:
         board = chess.Board(fen)
-        svg_data = chess.svg.board(board=board, size=400)
+        # Flip board when black is to move, for intuitive viewing
+        flipped = not board.turn
+        svg_data = chess.svg.board(board=board, size=400, flipped=flipped)
     except Exception:
         board = chess.Board()
         svg_data = chess.svg.board(board=board, size=400)
@@ -392,6 +434,13 @@ async def get_position():
     mate = eval_result.get("mate")
     bestmove = eval_result.get("bestmove")
     pv = eval_result.get("pv", [])
+
+    # Stockfish UCI reports cp/mate from the side-to-move perspective.
+    # Convert to white's perspective for consistent classification.
+    if not board.turn:  # black to move
+        cp = -cp
+        if mate is not None:
+            mate = -mate
 
     # Convert bestmove to SAN
     bestmove_san = None
@@ -470,17 +519,17 @@ async def submit_guess(request: Request):
     mate = session["mate"]
     if mate is not None:
         if mate > 0:
-            eval_text = f"白方 M{mate} (White mates in {mate})"
+            eval_text = f"White M{mate} (White mates in {mate})"
         else:
-            eval_text = f"黑方 M{abs(mate)} (Black mates in {abs(mate)})"
+            eval_text = f"Black M{abs(mate)} (Black mates in {abs(mate)})"
     else:
         abs_cp = abs(cp)
         if cp > 0:
-            eval_text = f"+{cp / 100:.2f} (白优 {abs_cp / 100:.2f} 兵)"
+            eval_text = f"+{cp / 100:.2f} (white +{abs_cp / 100:.2f})"
         elif cp < 0:
-            eval_text = f"{cp / 100:.2f} (黑优 {abs_cp / 100:.2f} 兵)"
+            eval_text = f"{cp / 100:.2f} (black +{abs_cp / 100:.2f})"
         else:
-            eval_text = "0.00 (完全均势)"
+            eval_text = "0.00 (dead equal)"
 
     # Determine the correct category info
     cat_info = CATEGORY_BY_KEY[correct_category]
@@ -507,32 +556,6 @@ async def submit_guess(request: Request):
     del sessions[session_id]
 
     return result
-
-
-# ---------------------------------------------------------------------------
-# Startup / shutdown
-# ---------------------------------------------------------------------------
-
-
-@app.on_event("startup")
-async def startup():
-    """Start Stockfish and build position database on startup."""
-
-    # Build position database in a thread so the server starts quickly
-    def init_db():
-        build_position_database()
-
-    db_thread = threading.Thread(target=init_db, daemon=True)
-    db_thread.start()
-
-    # Start Stockfish
-    engine.start()
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Stop Stockfish."""
-    engine.stop()
 
 
 # ---------------------------------------------------------------------------

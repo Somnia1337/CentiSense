@@ -1,723 +1,813 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EvalGuessr — 国际象棋局面评估训练</title>
-    <style>
-        :root {
-            --bg: #1a1a2e;
-            --surface: #16213e;
-            --surface2: #0f3460;
-            --text: #e0e0e0;
-            --text-secondary: #a0a0b0;
-            --accent: #e94560;
-            --accent2: #533483;
-            --green: #4caf84;
-            --green-dark: #2d6a4f;
-            --yellow: #d4a843;
-            --orange: #e07b39;
-            --red: #d94141;
-            --border: #2a2a4a;
-            --radius: 12px;
-            --transition: 0.2s ease;
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            background-image:
-                radial-gradient(ellipse at 20% 20%, rgba(233, 69, 96, 0.08) 0%, transparent 60%),
-                radial-gradient(ellipse at 80% 80%, rgba(83, 52, 131, 0.12) 0%, transparent 60%);
-        }
-
-        .container {
-            max-width: 900px;
-            width: 100%;
-            background: var(--surface);
-            border-radius: var(--radius);
-            padding: 32px;
-            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
-            border: 1px solid var(--border);
-        }
-
-        header {
-            text-align: center;
-            margin-bottom: 28px;
-        }
-
-        header h1 {
-            font-size: 2rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent), #d4789e);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            letter-spacing: 0.5px;
-        }
-
-        header p {
-            color: var(--text-secondary);
-            font-size: 0.95rem;
-            margin-top: 6px;
-        }
-
-        .main-layout {
-            display: flex;
-            gap: 28px;
-            align-items: flex-start;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-
-        .board-section {
-            flex-shrink: 0;
-            background: var(--surface2);
-            border-radius: var(--radius);
-            padding: 16px;
-            border: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .board-section .board-container {
-            line-height: 0;
-            border-radius: 4px;
-            overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-        }
-
-        .board-section .board-container svg {
-            display: block;
-            width: 400px;
-            height: 400px;
-        }
-
-        .fen-display {
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 0.72rem;
-            color: var(--text-secondary);
-            word-break: break-all;
-            text-align: center;
-            background: rgba(0, 0, 0, 0.25);
-            padding: 6px 10px;
-            border-radius: 6px;
-            max-width: 400px;
-            line-height: 1.4;
-        }
-
-        .side-indicator {
-            font-weight: 600;
-            font-size: 0.9rem;
-            padding: 4px 14px;
-            border-radius: 20px;
-            background: var(--surface2);
-            border: 1px solid var(--border);
-        }
-        .side-indicator.white {
-            color: #f0f0f0;
-            border-color: #555;
-        }
-        .side-indicator.black {
-            color: #aaa;
-            border-color: #444;
-        }
-
-        .controls-section {
-            flex: 1;
-            min-width: 280px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .guess-panel, .result-panel {
-            background: var(--surface2);
-            border-radius: var(--radius);
-            padding: 20px;
-            border: 1px solid var(--border);
-        }
-
-        .guess-panel h3, .result-panel h3 {
-            font-size: 1rem;
-            margin-bottom: 16px;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .eval-buttons {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .eval-btn {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 12px 16px;
-            border: 2px solid transparent;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1rem;
-            font-weight: 600;
-            color: #fff;
-            transition: all var(--transition);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .eval-btn:hover {
-            transform: translateX(4px);
-            filter: brightness(1.2);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-        }
-        .eval-btn:active {
-            transform: scale(0.98);
-        }
-        .eval-btn:disabled {
-            opacity: 0.45;
-            cursor: not-allowed;
-            transform: none;
-            filter: none;
-            box-shadow: none;
-        }
-
-        .eval-btn .label {
-            font-size: 1.05rem;
-        }
-        .eval-btn .range {
-            font-size: 0.75rem;
-            opacity: 0.7;
-            font-weight: 400;
-        }
-
-        .btn-white-winning {
-            background: linear-gradient(135deg, #1a6b3c, #0d4a28);
-            border-color: #2ecc71;
-        }
-        .btn-white-big {
-            background: linear-gradient(135deg, #1a7a4a, #1a5c3a);
-            border-color: #27ae60;
-        }
-        .btn-white-slight {
-            background: linear-gradient(135deg, #2a6a4a, #1e5038);
-            border-color: #52be80;
-        }
-        .btn-equal {
-            background: linear-gradient(135deg, #4a4a5a, #3a3a4a);
-            border-color: #888;
-        }
-        .btn-black-slight {
-            background: linear-gradient(135deg, #5a3a3a, #4a2a2a);
-            border-color: #c0392b;
-        }
-        .btn-black-big {
-            background: linear-gradient(135deg, #6a2a2a, #5a1a1a);
-            border-color: #e74c3c;
-        }
-        .btn-black-winning {
-            background: linear-gradient(135deg, #6b1a1a, #4a0d0d);
-            border-color: #e74c3c;
-        }
-
-        .result-panel {
-            display: none;
-        }
-        .result-panel.visible {
-            display: block;
-            animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>CentiSense</title>
+        <style>
+            :root {
+                --bg: #0f0f12;
+                --surface: #18181f;
+                --surface2: #1f1f28;
+                --text: #c8c8d4;
+                --text-secondary: #707088;
+                --text-muted: #4a4a58;
+                --accent: #5b8db8;
+                --accent-dim: #3d5f7a;
+                --correct: #5a9e6f;
+                --incorrect: #b85c5c;
+                --border: #282835;
+                --radius: 8px;
+                --transition: 0.15s ease;
             }
-            to {
-                opacity: 1;
-                transform: translateY(0);
+
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
             }
-        }
 
-        .result-summary {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 16px;
-            padding: 14px;
-            border-radius: 8px;
-            font-weight: 700;
-            font-size: 1.1rem;
-        }
-        .result-summary.correct {
-            background: rgba(76, 175, 132, 0.15);
-            border: 1px solid var(--green);
-            color: var(--green);
-        }
-        .result-summary.incorrect {
-            background: rgba(233, 69, 96, 0.15);
-            border: 1px solid var(--accent);
-            color: var(--accent);
-        }
-
-        .result-summary .icon {
-            font-size: 1.6rem;
-        }
-
-        .result-details {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            font-size: 0.92rem;
-        }
-        .result-details .detail-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-        }
-        .result-details .detail-row:last-child {
-            border-bottom: none;
-        }
-        .detail-label {
-            color: var(--text-secondary);
-            font-size: 0.85rem;
-        }
-        .detail-value {
-            font-weight: 600;
-            text-align: right;
-        }
-        .detail-value.green {
-            color: var(--green);
-        }
-        .detail-value.red {
-            color: var(--accent);
-        }
-
-        .pv-line {
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            font-size: 0.8rem;
-            color: #c0c0d0;
-            background: rgba(0, 0, 0, 0.2);
-            padding: 8px 12px;
-            border-radius: 6px;
-            word-break: break-all;
-        }
-
-        .next-btn-container {
-            margin-top: 16px;
-            text-align: center;
-        }
-
-        .next-btn {
-            padding: 12px 36px;
-            font-size: 1.05rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent), var(--accent2));
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all var(--transition);
-            letter-spacing: 0.5px;
-        }
-        .next-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 24px rgba(233, 69, 96, 0.35);
-            filter: brightness(1.1);
-        }
-        .next-btn:active {
-            transform: translateY(0);
-            filter: brightness(0.95);
-        }
-        .next-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
-        }
-
-        .stats-bar {
-            display: flex;
-            justify-content: center;
-            gap: 24px;
-            margin-top: 20px;
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-        }
-        .stats-bar span {
-            font-weight: 600;
-        }
-        .stats-bar .correct-count {
-            color: var(--green);
-        }
-        .stats-bar .total-count {
-            color: var(--text);
-        }
-
-        .loading-indicator {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-            padding: 20px;
-        }
-        .spinner {
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(255, 255, 255, 0.2);
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            animation: spin 0.6s linear infinite;
-        }
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
+            body {
+                font-family:
+                    "Inter",
+                    "Segoe UI",
+                    "PingFang SC",
+                    "Microsoft YaHei",
+                    system-ui,
+                    -apple-system,
+                    sans-serif;
+                background: var(--bg);
+                color: var(--text);
+                min-height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                padding: 24px;
             }
-        }
 
-        @media (max-width: 700px) {
+            .container {
+                max-width: 880px;
+                width: 100%;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 20px 24px;
+            }
+
+            header {
+                display: flex;
+                justify-content: space-between;
+                align-items: baseline;
+                margin-bottom: 24px;
+                padding-bottom: 16px;
+                border-bottom: 1px solid var(--border);
+            }
+            header h1 {
+                font-size: 1.5rem;
+                font-weight: 600;
+                letter-spacing: -0.3px;
+                color: var(--text);
+            }
+            header p {
+                font-size: 0.8rem;
+                color: var(--text-secondary);
+            }
+
             .main-layout {
+                display: flex;
+                gap: 28px;
+                align-items: flex-start;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            /* ---- Loading overlay (replaces main-layout during analysis) ---- */
+            #loading-overlay {
+                display: none;
                 flex-direction: column;
                 align-items: center;
+                justify-content: center;
+                gap: 16px;
+                padding: 80px 20px;
+                color: var(--text-secondary);
+                font-size: 0.9rem;
             }
-            .board-section .board-container svg {
-                width: 320px;
-                height: 320px;
+            #loading-overlay.visible {
+                display: flex;
             }
-            .container {
-                padding: 16px;
+            #loading-overlay .spinner {
+                width: 28px;
+                height: 28px;
+                border-width: 3px;
             }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>EvalGuessr</h1>
-            <p>观察局面，判断形势 — 用 Stockfish 18 验证你的棋感</p>
-        </header>
+            #main-content.hidden {
+                display: none;
+            }
 
-        <div class="main-layout">
-            <!-- Board -->
-            <div class="board-section">
-                <div class="board-container" id="board-container">
-                    <div class="loading-indicator">
-                        <div class="spinner"></div>
-                        <span>加载中...</span>
-                    </div>
-                </div>
-                <div class="fen-display" id="fen-display"></div>
-                <div class="side-indicator" id="side-indicator"></div>
+            /* ---- Board ---- */
+            .board-section {
+                flex-shrink: 0;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 10px;
+            }
+            .board-container {
+                line-height: 0;
+                border-radius: 3px;
+                overflow: hidden;
+                box-shadow: 0 2px 24px rgba(0, 0, 0, 0.5);
+                border: 1px solid var(--border);
+            }
+            .board-container svg {
+                display: block;
+                width: 400px;
+                height: 400px;
+            }
+            .board-meta {
+                display: flex;
+                gap: 12px;
+                align-items: center;
+                font-size: 0.75rem;
+                color: var(--text-secondary);
+            }
+            .side-badge {
+                font-weight: 500;
+                font-size: 0.78rem;
+                margin-top: 12px;
+                padding: 3px 12px;
+                border-radius: 4px;
+                background: var(--surface2);
+                border: 1px solid var(--border);
+                cursor: pointer;
+                transition: background var(--transition);
+            }
+            .side-badge:hover {
+                background: #2a2a35;
+            }
+            .fen-display {
+                font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+                font-size: 0.68rem;
+                color: var(--text-muted);
+                word-break: break-all;
+                text-align: center;
+                max-width: 400px;
+                line-height: 1.5;
+            }
+
+            /* ---- Controls ---- */
+            .controls-section {
+                flex: 1;
+                min-width: 280px;
+                display: flex;
+                flex-direction: column;
+                gap: 14px;
+            }
+
+            .panel {
+                background: var(--surface2);
+                border: 1px solid var(--border);
+                border-radius: var(--radius);
+                padding: 18px;
+            }
+            .panel h3 {
+                font-size: 0.78rem;
+                font-weight: 500;
+                color: var(--text-secondary);
+                text-transform: uppercase;
+                letter-spacing: 1.2px;
+                margin-bottom: 14px;
+            }
+
+            /* ---- Evaluation Buttons ---- */
+            .eval-buttons {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+            .eval-btn {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 10px 14px;
+                border: 1px solid var(--border);
+                border-left: 4px solid var(--border);
+                border-radius: 0 var(--radius) var(--radius) 0;
+                background: var(--surface);
+                cursor: pointer;
+                font-size: 0.9rem;
+                font-weight: 500;
+                color: var(--text);
+                transition: all var(--transition);
+            }
+            .eval-btn:hover {
+                background: #25252f;
+                border-left-width: 6px;
+                padding-left: 12px;
+            }
+            .eval-btn:active {
+                transform: scale(0.99);
+            }
+            .eval-btn:disabled {
+                opacity: 0.35;
+                cursor: not-allowed;
+                pointer-events: none;
+            }
+            .eval-btn .range {
+                font-size: 0.7rem;
+                color: var(--text-muted);
+                font-weight: 400;
+                font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+            }
+
+            /* White-advantage buttons: green-tinted left border */
+            .btn-ww {
+                border-left-color: #4a9060;
+            }
+            .btn-wb {
+                border-left-color: #5a9668;
+            }
+            .btn-ws {
+                border-left-color: #6a9c70;
+            }
+            /* Equal */
+            .btn-eq {
+                border-left-color: #585868;
+            }
+            /* Black-advantage buttons: red-tinted left border */
+            .btn-bs {
+                border-left-color: #9c6a6a;
+            }
+            .btn-bb {
+                border-left-color: #965a5a;
+            }
+            .btn-bw {
+                border-left-color: #904a4a;
+            }
+
+            /* ---- Result Panel ---- */
+            #result-panel {
+                display: none;
+            }
+            #result-panel.visible {
+                display: block;
+                animation: fadeIn 0.25s ease;
+            }
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(8px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            .result-summary {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 16px;
+                padding: 12px;
+                border-radius: 6px;
+                font-weight: 600;
+                font-size: 0.95rem;
+            }
+            .result-summary.correct {
+                background: rgba(90, 158, 111, 0.08);
+                border: 1px solid rgba(90, 158, 111, 0.25);
+                color: var(--correct);
+            }
+            .result-summary.incorrect {
+                background: rgba(184, 92, 92, 0.08);
+                border: 1px solid rgba(184, 92, 92, 0.25);
+                color: var(--incorrect);
+            }
+
+            .result-details {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                font-size: 0.88rem;
+            }
+            .detail-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 6px 0;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            }
+            .detail-row:last-child {
+                border-bottom: none;
+            }
+            .detail-label {
+                color: var(--text-secondary);
+                font-size: 0.8rem;
+            }
+            .detail-value {
+                font-weight: 500;
+                text-align: right;
+            }
+            .detail-value.green {
+                color: var(--correct);
+            }
+            .detail-value.red {
+                color: var(--incorrect);
+            }
+
+            .pv-line {
+                font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+                font-size: 0.76rem;
+                color: #9090a0;
+                background: rgba(0, 0, 0, 0.2);
+                padding: 8px 12px;
+                border-radius: 5px;
+                word-break: break-all;
+            }
+
+            .next-btn-wrap {
+                margin-top: 14px;
+                text-align: center;
+            }
+            .next-btn {
+                padding: 10px 32px;
+                font-size: 0.95rem;
+                font-weight: 500;
+                background: var(--accent-dim);
+                color: #fff;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                cursor: pointer;
+                transition: all var(--transition);
+            }
+            .next-btn:hover {
+                background: var(--accent);
+                box-shadow: 0 2px 16px rgba(91, 141, 184, 0.2);
+            }
+            .next-btn:active {
+                transform: scale(0.97);
+            }
+            .next-btn:disabled {
+                opacity: 0.4;
+                cursor: not-allowed;
+                transform: none;
+                box-shadow: none;
+            }
+
+            /* ---- Stats ---- */
+            .stats-bar {
+                display: flex;
+                justify-content: center;
+                gap: 20px;
+                margin-top: 16px;
+                font-size: 0.78rem;
+                color: var(--text-secondary);
+            }
+            .stats-bar .correct-count {
+                color: var(--correct);
+                font-weight: 600;
+            }
+            .stats-bar .total-count {
+                color: var(--text);
+                font-weight: 600;
+            }
+            .stats-bar .accuracy {
+                color: var(--accent);
+                font-weight: 600;
+            }
+
+            /* ---- Loading ---- */
+            .loading-indicator {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                color: var(--text-secondary);
+                font-size: 0.82rem;
+                padding: 20px;
+            }
+            .spinner {
+                width: 18px;
+                height: 18px;
+                border: 2.5px solid rgba(255, 255, 255, 0.12);
+                border-top-color: var(--accent);
+                border-radius: 50%;
+                animation: spin 0.6s linear infinite;
+            }
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            .shortcut-hint {
+                font-size: 0.65rem;
+                color: var(--text-muted);
+                margin-top: 10px;
+                text-align: center;
+            }
+            .shortcut-hint kbd {
+                display: inline-block;
+                padding: 1px 5px;
+                border: 1px solid var(--border);
+                border-radius: 3px;
+                font-family: inherit;
+                font-size: 0.65rem;
+                background: var(--surface);
+            }
+
+            @media (max-width: 700px) {
+                .main-layout {
+                    flex-direction: column;
+                    align-items: center;
+                }
+                .board-container svg {
+                    width: 320px;
+                    height: 320px;
+                }
+                .container {
+                    padding: 16px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>CentiSense</h1>
+                <p>Stockfish 18 &middot; depth 20</p>
+            </header>
+
+            <div id="loading-overlay" class="visible">
+                <div class="spinner"></div>
+                <span>Stockfish analyzing...</span>
             </div>
-
-            <!-- Controls -->
-            <div class="controls-section">
-                <!-- Guess panel -->
-                <div class="guess-panel" id="guess-panel">
-                    <h3>你的判断</h3>
-                    <div class="eval-buttons" id="eval-buttons">
-                        <button class="eval-btn btn-white-winning" data-category="white_winning">
-                            <span class="label">🏆 白胜势</span>
-                            <span class="range">≥ +3.00</span>
-                        </button>
-                        <button class="eval-btn btn-white-big" data-category="white_big">
-                            <span class="label">📈 白大优</span>
-                            <span class="range">+1.50 ~ +2.99</span>
-                        </button>
-                        <button class="eval-btn btn-white-slight" data-category="white_slight">
-                            <span class="label">📊 白小优</span>
-                            <span class="range">+0.50 ~ +1.49</span>
-                        </button>
-                        <button class="eval-btn btn-equal" data-category="equal">
-                            <span class="label">⚖️ 均势</span>
-                            <span class="range">-0.49 ~ +0.49</span>
-                        </button>
-                        <button class="eval-btn btn-black-slight" data-category="black_slight">
-                            <span class="label">📊 黑小优</span>
-                            <span class="range">-1.49 ~ -0.50</span>
-                        </button>
-                        <button class="eval-btn btn-black-big" data-category="black_big">
-                            <span class="label">📉 黑大优</span>
-                            <span class="range">-2.99 ~ -1.50</span>
-                        </button>
-                        <button class="eval-btn btn-black-winning" data-category="black_winning">
-                            <span class="label">💀 黑胜势</span>
-                            <span class="range">≤ -3.00</span>
-                        </button>
+            <div class="main-layout hidden" id="main-content">
+                <!-- Board -->
+                <div class="board-section">
+                    <div class="board-container" id="board-container"></div>
+                    <div class="board-meta">
+                        <span
+                            class="side-badge"
+                            id="fen-badge"
+                            title="Click to copy FEN"
+                        ></span>
                     </div>
                 </div>
 
-                <!-- Result panel (hidden initially) -->
-                <div class="result-panel" id="result-panel">
-                    <h3>分析结果</h3>
-                    <div id="result-content"></div>
-                    <div class="next-btn-container">
-                        <button class="next-btn" id="next-btn" onclick="nextPosition()">
-                            ▶ 下一题
-                        </button>
+                <!-- Controls -->
+                <div class="controls-section">
+                    <div class="panel" id="guess-panel">
+                        <h3 id="guess-heading"></h3>
+                        <div class="eval-buttons">
+                            <button
+                                class="eval-btn btn-ww"
+                                data-category="white_winning"
+                            >
+                                <span class="label">White winning</span>
+                                <span class="range">&ge; +3.00</span>
+                            </button>
+                            <button
+                                class="eval-btn btn-wb"
+                                data-category="white_big"
+                            >
+                                <span class="label">White clear advantage</span>
+                                <span class="range">+1.50 &ndash; +2.99</span>
+                            </button>
+                            <button
+                                class="eval-btn btn-ws"
+                                data-category="white_slight"
+                            >
+                                <span class="label">White slight edge</span>
+                                <span class="range">+0.50 &ndash; +1.49</span>
+                            </button>
+                            <button
+                                class="eval-btn btn-eq"
+                                data-category="equal"
+                            >
+                                <span class="label">Equal</span>
+                                <span class="range"
+                                    >&minus;0.49 &ndash; +0.49</span
+                                >
+                            </button>
+                            <button
+                                class="eval-btn btn-bs"
+                                data-category="black_slight"
+                            >
+                                <span class="label">Black slight edge</span>
+                                <span class="range"
+                                    >&minus;1.49 &ndash; &minus;0.50</span
+                                >
+                            </button>
+                            <button
+                                class="eval-btn btn-bb"
+                                data-category="black_big"
+                            >
+                                <span class="label">Black clear advantage</span>
+                                <span class="range"
+                                    >&minus;2.99 &ndash; &minus;1.50</span
+                                >
+                            </button>
+                            <button
+                                class="eval-btn btn-bw"
+                                data-category="black_winning"
+                            >
+                                <span class="label">Black winning</span>
+                                <span class="range">&le; &minus;3.00</span>
+                            </button>
+                        </div>
+                        <div class="shortcut-hint">
+                            Keys <kbd>1</kbd>&ndash;<kbd>7</kbd> &middot;
+                            <kbd>Space</kbd> next
+                        </div>
+                    </div>
+
+                    <div class="panel" id="result-panel">
+                        <h3>Analysis result</h3>
+                        <div id="result-content"></div>
+                        <div class="next-btn-wrap">
+                            <button
+                                class="next-btn"
+                                id="next-btn"
+                                onclick="nextPosition()"
+                            >
+                                Next position
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="stats-bar">
+                        <span
+                            >Correct:
+                            <span class="correct-count" id="correct-count"
+                                >0</span
+                            ></span
+                        >
+                        <span
+                            >Total:
+                            <span class="total-count" id="total-count"
+                                >0</span
+                            ></span
+                        >
+                        <span
+                            >Rate:
+                            <span class="accuracy" id="accuracy"
+                                >&mdash;</span
+                            ></span
+                        >
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Stats -->
-        <div class="stats-bar" id="stats-bar">
-            正确: <span class="correct-count" id="correct-count">0</span> /
-            总计: <span class="total-count" id="total-count">0</span>
-            (<span id="accuracy">-</span>)
-        </div>
-    </div>
+        <script>
+            let currentSessionId = null;
+            let isLoading = false;
+            let correctCount = 0;
+            let totalCount = 0;
 
-    <script>
-        // --- State ---
-        let currentSessionId = null;
-        let currentSideToMove = null;
-        let isLoading = false;
-        let correctCount = 0;
-        let totalCount = 0;
+            async function loadPosition() {
+                if (isLoading) return;
+                isLoading = true;
 
-        // --- Load initial position ---
-        async function loadPosition() {
-            if (isLoading) return;
-            isLoading = true;
+                // Hide main content, show loading overlay
+                document.getElementById("main-content").classList.add("hidden");
+                document
+                    .getElementById("result-panel")
+                    .classList.remove("visible");
+                document.getElementById("guess-panel").style.display = "block";
+                document
+                    .getElementById("loading-overlay")
+                    .classList.add("visible");
+                document.getElementById("fen-badge").textContent = "";
+                document.getElementById("guess-heading").textContent = "";
 
-            // Reset UI
-            document.getElementById('result-panel').classList.remove('visible');
-            document.getElementById('guess-panel').style.display = 'block';
-            document.getElementById('board-container').innerHTML = `
-                        <div class="loading-indicator">
-                            <div class="spinner"></div>
-                            <span>Stockfish 分析中...</span>
-                        </div>`;
-            document.getElementById('fen-display').textContent = '';
-            document.getElementById('side-indicator').textContent = '';
-            document.getElementById('next-btn').disabled = false;
+                document
+                    .querySelectorAll(".eval-btn")
+                    .forEach((b) => (b.disabled = false));
 
-            // Enable all guess buttons
-            document.querySelectorAll('.eval-btn').forEach(btn => {
-                btn.disabled = false;
-            });
+                try {
+                    const res = await fetch("/api/position");
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
 
-            try {
-                const response = await fetch('/api/position');
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                const data = await response.json();
+                    currentSessionId = data.session_id;
 
-                currentSessionId = data.session_id;
-                currentSideToMove = data.side_to_move;
+                    // Hide loading overlay, show main content
+                    document
+                        .getElementById("loading-overlay")
+                        .classList.remove("visible");
+                    document
+                        .getElementById("main-content")
+                        .classList.remove("hidden");
 
-                // Display board
-                document.getElementById('board-container').innerHTML = data.svg;
+                    document.getElementById("board-container").innerHTML =
+                        data.svg;
 
-                // Display FEN
-                document.getElementById('fen-display').textContent = 'FEN: ' + data.fen;
+                    // FEN in clickable badge
+                    const fenBadge = document.getElementById("fen-badge");
+                    fenBadge.textContent = data.fen;
 
-                // Display side to move
-                const sideEl = document.getElementById('side-indicator');
-                if (data.side_to_move === 'white') {
-                    sideEl.textContent = '⬜ 白方走棋 (White to move)';
-                    sideEl.className = 'side-indicator white';
-                } else {
-                    sideEl.textContent = '⬛ 黑方走棋 (Black to move)';
-                    sideEl.className = 'side-indicator black';
-                }
-            } catch (err) {
-                console.error('Failed to load position:', err);
-                document.getElementById('board-container').innerHTML = `
-                            <div style="color: var(--accent); text-align: center; padding: 40px;">
-                                ⚠️ 加载失败<br>
-                                <small>${err.message}</small><br>
-                                <button onclick="loadPosition()" style="margin-top:12px;padding:8px 20px;border-radius:6px;cursor:pointer;">重试</button>
-                            </div>`;
-            } finally {
-                isLoading = false;
-            }
-        }
-
-        // --- Handle guess ---
-        async function submitGuess(category) {
-            if (!currentSessionId || isLoading) return;
-            isLoading = true;
-
-            // Disable all guess buttons
-            document.querySelectorAll('.eval-btn').forEach(btn => {
-                btn.disabled = true;
-            });
-
-            try {
-                const response = await fetch('/api/guess', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        session_id: currentSessionId,
-                        category: category
-                    })
-                });
-
-                if (!response.ok) {
-                    const errData = await response.json();
-                    throw new Error(errData.detail || `HTTP ${response.status}`);
-                }
-
-                const result = await response.json();
-                displayResult(result, category);
-                updateStats(result.correct);
-
-                currentSessionId = null;
-            } catch (err) {
-                console.error('Failed to submit guess:', err);
-                alert('提交失败: ' + err.message);
-                // Re-enable buttons on error
-                document.querySelectorAll('.eval-btn').forEach(btn => {
-                    btn.disabled = false;
-                });
-            } finally {
-                isLoading = false;
-            }
-        }
-
-        // --- Display result ---
-        function displayResult(result, guessCategory) {
-            const panel = document.getElementById('result-panel');
-            const content = document.getElementById('result-content');
-
-            const isCorrect = result.correct;
-            const icon = isCorrect ? '✅' : '❌';
-            const summaryClass = isCorrect ? 'correct' : 'incorrect';
-            const summaryText = isCorrect ?
-                '正确！你的判断与 Stockfish 18 一致' :
-                '错误 — 来看看正确答案';
-
-            // Category display names
-            const catNames = {
-                'white_winning': '白胜势',
-                'white_big': '白大优',
-                'white_slight': '白小优',
-                'equal': '均势',
-                'black_slight': '黑小优',
-                'black_big': '黑大优',
-                'black_winning': '黑胜势'
-            };
-
-            let pvHTML = '';
-            if (result.pv && result.pv.length > 0) {
-                pvHTML = `
-                        <div class="detail-row">
-                            <span class="detail-label">主要变例 (PV)</span>
-                        </div>
-                        <div class="pv-line">${result.pv.join(' ')}</div>`;
-            }
-
-            content.innerHTML = `
-                    <div class="result-summary ${summaryClass}">
-                        <span class="icon">${icon}</span>
-                        <span>${summaryText}</span>
-                    </div>
-                    <div class="result-details">
-                        <div class="detail-row">
-                            <span class="detail-label">你的判断</span>
-                            <span class="detail-value">${catNames[result.guess_category] || result.guess_category}</span>
-                        </div>
-                        <div class="detail-row">
-                            <span class="detail-label">正确答案</span>
-                            <span class="detail-value ${isCorrect ? 'green' : 'red'}">${result.correct_label}</span>
-                        </div>
-                        <div class="detail-row">
-                            <span class="detail-label">Stockfish 18 评价值</span>
-                            <span class="detail-value">${result.eval_text}</span>
-                        </div>
-                        <div class="detail-row">
-                            <span class="detail-label">最佳着法</span>
-                            <span class="detail-value green">${result.bestmove || 'N/A'}</span>
-                        </div>
-                        ${pvHTML}
+                    // Side to move as panel heading
+                    document.getElementById("guess-heading").textContent =
+                        data.side_to_move === "white"
+                            ? "White to move"
+                            : "Black to move";
+                } catch (err) {
+                    document
+                        .getElementById("loading-overlay")
+                        .classList.remove("visible");
+                    document
+                        .getElementById("main-content")
+                        .classList.remove("hidden");
+                    document.getElementById("board-container").innerHTML =
+                        `<div style="color:var(--incorrect);text-align:center;padding:40px;">
+                        Failed to load<br><small>${err.message}</small><br>
+                        <button onclick="loadPosition()" style="margin-top:12px;padding:6px 16px;border-radius:4px;cursor:pointer;">Retry</button>
                     </div>`;
+                } finally {
+                    isLoading = false;
+                }
+            }
 
-            panel.classList.add('visible');
-            document.getElementById('guess-panel').style.display = 'none';
-        }
+            async function submitGuess(category) {
+                if (!currentSessionId || isLoading) return;
+                isLoading = true;
+                document
+                    .querySelectorAll(".eval-btn")
+                    .forEach((b) => (b.disabled = true));
 
-        // --- Update stats ---
-        function updateStats(correct) {
-            totalCount++;
-            if (correct) correctCount++;
-            document.getElementById('correct-count').textContent = correctCount;
-            document.getElementById('total-count').textContent = totalCount;
-            const accuracy = totalCount > 0 ? (correctCount / totalCount * 100).toFixed(1) + '%' : '-';
-            document.getElementById('accuracy').textContent = accuracy;
-        }
+                try {
+                    const res = await fetch("/api/guess", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            session_id: currentSessionId,
+                            category,
+                        }),
+                    });
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.detail || `HTTP ${res.status}`);
+                    }
+                    const result = await res.json();
+                    displayResult(result);
+                    updateStats(result.correct);
+                    currentSessionId = null;
+                } catch (err) {
+                    alert("Submit failed: " + err.message);
+                    document
+                        .querySelectorAll(".eval-btn")
+                        .forEach((b) => (b.disabled = false));
+                } finally {
+                    isLoading = false;
+                }
+            }
 
-        // --- Next position ---
-        function nextPosition() {
-            document.getElementById('result-panel').classList.remove('visible');
-            document.getElementById('guess-panel').style.display = 'block';
-            loadPosition();
-        }
+            function displayResult(result) {
+                const panel = document.getElementById("result-panel");
+                const isCorrect = result.correct;
+                const cls = isCorrect ? "correct" : "incorrect";
+                const summary = isCorrect ? "Correct" : "Incorrect";
 
-        // --- Attach event listeners to guess buttons ---
-        document.querySelectorAll('.eval-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const category = btn.dataset.category;
-                if (category) {
-                    submitGuess(category);
+                const catNames = {
+                    white_winning: "White winning",
+                    white_big: "White clear advantage",
+                    white_slight: "White slight edge",
+                    equal: "Equal",
+                    black_slight: "Black slight edge",
+                    black_big: "Black clear advantage",
+                    black_winning: "Black winning",
+                };
+
+                let pvHTML = "";
+                if (result.pv && result.pv.length > 0) {
+                    pvHTML = `<div class="detail-row"><span class="detail-label">Principal variation</span></div>
+                          <div class="pv-line">${result.pv.join(" ")}</div>`;
+                }
+
+                document.getElementById("result-content").innerHTML = `
+                <div class="result-summary ${cls}">
+                    <span>${isCorrect ? "&#10003;" : "&#10007;"}</span>
+                    <span>${summary}</span>
+                </div>
+                <div class="result-details">
+                    <div class="detail-row">
+                        <span class="detail-label">Your guess</span>
+                        <span class="detail-value">${catNames[result.guess_category] || result.guess_category}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Correct answer</span>
+                        <span class="detail-value ${isCorrect ? "green" : "red"}">${result.correct_label}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Stockfish evaluation</span>
+                        <span class="detail-value">${result.eval_text}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Best move</span>
+                        <span class="detail-value green">${result.bestmove || "N/A"}</span>
+                    </div>
+                    ${pvHTML}
+                </div>`;
+
+                panel.classList.add("visible");
+                document.getElementById("guess-panel").style.display = "none";
+            }
+
+            function updateStats(correct) {
+                totalCount++;
+                if (correct) correctCount++;
+                document.getElementById("correct-count").textContent =
+                    correctCount;
+                document.getElementById("total-count").textContent = totalCount;
+                const rate =
+                    totalCount > 0
+                        ? ((correctCount / totalCount) * 100).toFixed(1) + "%"
+                        : "\u2014";
+                document.getElementById("accuracy").textContent = rate;
+            }
+
+            function nextPosition() {
+                document
+                    .getElementById("result-panel")
+                    .classList.remove("visible");
+                document.getElementById("guess-panel").style.display = "block";
+                loadPosition();
+            }
+
+            document.querySelectorAll(".eval-btn").forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    if (btn.dataset.category) submitGuess(btn.dataset.category);
+                });
+            });
+
+            document.addEventListener("keydown", (e) => {
+                if (isLoading) return;
+                const map = {
+                    1: "white_winning",
+                    2: "white_big",
+                    3: "white_slight",
+                    4: "equal",
+                    5: "black_slight",
+                    6: "black_big",
+                    7: "black_winning",
+                    n: "next",
+                    " ": "next",
+                };
+                const action = map[e.key];
+                if (!action) return;
+                e.preventDefault();
+                if (action === "next") {
+                    if (!currentSessionId) nextPosition();
+                } else if (currentSessionId) {
+                    submitGuess(action);
                 }
             });
-        });
 
-        // --- Keyboard shortcuts ---
-        document.addEventListener('keydown', (e) => {
-            if (isLoading) return;
+            // FEN badge: click to copy
+            document
+                .getElementById("fen-badge")
+                .addEventListener("click", () => {
+                    const badge = document.getElementById("fen-badge");
+                    const fen = badge.textContent;
+                    if (!fen) return;
+                    navigator.clipboard
+                        .writeText(fen)
+                        .then(() => {
+                            badge.style.borderColor = "var(--correct)";
+                            badge.style.color = "var(--correct)";
+                            // Show floating tooltip so badge width stays stable
+                            const tip = document.createElement("span");
+                            tip.textContent = "Copied";
+                            tip.style.cssText =
+                                "position:absolute;top:-24px;left:50%;transform:translateX(-50%);" +
+                                "font-size:0.7rem;color:var(--correct);background:var(--surface2);" +
+                                "padding:2px 8px;border-radius:3px;border:1px solid var(--correct);" +
+                                "white-space:nowrap;pointer-events:none;z-index:10;";
+                            badge.style.position = "relative";
+                            badge.appendChild(tip);
+                            setTimeout(() => {
+                                tip.remove();
+                                badge.style.borderColor = "";
+                                badge.style.color = "";
+                                badge.style.position = "";
+                            }, 1000);
+                        })
+                        .catch(() => {
+                            const ta = document.createElement("textarea");
+                            ta.value = fen;
+                            ta.style.position = "fixed";
+                            ta.style.opacity = "0";
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand("copy");
+                            document.body.removeChild(ta);
+                        });
+                });
 
-            const keyMap = {
-                '1': 'white_winning',
-                '2': 'white_big',
-                '3': 'white_slight',
-                '4': 'equal',
-                '5': 'black_slight',
-                '6': 'black_big',
-                '7': 'black_winning',
-                'n': 'next',  // next position
-                ' ': 'next',  // space for next
-            };
-
-            const action = keyMap[e.key];
-            if (!action) return;
-
-            e.preventDefault();
-
-            if (action === 'next') {
-                if (!currentSessionId) {
-                    nextPosition();
-                }
-            } else if (currentSessionId) {
-                submitGuess(action);
-            }
-        });
-
-        // --- Start ---
-        loadPosition();
-    </script>
-</body>
+            loadPosition();
+        </script>
+    </body>
 </html>
