@@ -2,7 +2,7 @@
 CentiSense — Chess Position Evaluation Trainer
 
 A web application that presents random chess positions from a database,
-lets users judge the evaluation, and reveals Stockfish 18 analysis.
+lets users judge the evaluation, and reveals Stockfish 19 analysis.
 """
 
 import logging
@@ -128,7 +128,7 @@ async def index():
 
 
 class StockfishEngine:
-    """Manages a persistent Stockfish 18 process."""
+    """Manages a persistent Stockfish 19 process."""
 
     def __init__(self, path: str = STOCKFISH_PATH):
         self.path = path
@@ -565,4 +565,4 @@ async def submit_guess(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=False, log_level="info")
