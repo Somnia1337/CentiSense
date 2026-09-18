@@ -15,7 +15,6 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 import chess
 import chess.pgn
@@ -64,6 +63,13 @@ def classify_eval(cp: int) -> str:
         if lo <= cp <= hi:
             return key
     return "equal"
+
+
+def evaluation_category(cp: int, mate: int | None) -> str:
+    """Classify a white-perspective evaluation, treating any forced mate as decisive."""
+    if mate is not None:
+        return classify_eval(10_000 if mate > 0 else -10_000)
+    return classify_eval(cp)
 
 
 # ---------------------------------------------------------------------------
@@ -127,12 +133,42 @@ async def index():
 # ---------------------------------------------------------------------------
 
 
+def parse_stockfish_line(line: str, state: dict) -> bool:
+    """Parse one Stockfish UCI output line into ``state`` in place.
+
+    ``state`` is updated with any of ``cp``, ``mate``, ``bestmove`` or ``pv``
+    present on the line. Returns True when the line is the terminal
+    ``bestmove`` line that ends a search.
+    """
+    line = line.strip()
+
+    match = re.match(r"^bestmove\s+(\S+)", line)
+    if match:
+        state["bestmove"] = match.group(1)
+        return True
+
+    if "score cp" in line:
+        match = re.search(r"score cp\s+(-?\d+)", line)
+        if match:
+            state["cp"] = int(match.group(1))
+    elif "score mate" in line:
+        match = re.search(r"score mate\s+(-?\d+)", line)
+        if match:
+            state["mate"] = int(match.group(1))
+
+    pv_match = re.search(r"\bpv\s+(.*)", line)
+    if pv_match:
+        state["pv"] = pv_match.group(1).split()
+
+    return False
+
+
 class StockfishEngine:
     """Manages a persistent Stockfish 19 process."""
 
     def __init__(self, path: str = STOCKFISH_PATH):
         self.path = path
-        self.process: Optional[subprocess.Popen] = None
+        self.process: subprocess.Popen | None = None
         self.lock = threading.Lock()
 
     def start(self):
@@ -178,14 +214,36 @@ class StockfishEngine:
         """Read lines until keyword found or timeout."""
         if not self.process or not self.process.stdout:
             return False
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            line = self.process.stdout.readline()
-            if not line:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            line = self._read_line(deadline - time.monotonic())
+            if line is None:
                 break
             if keyword in line:
                 return True
         return False
+
+    def _read_line(self, timeout: float) -> str | None:
+        """Read one line from the engine, returning None on timeout or EOF."""
+        if not self.process or not self.process.stdout:
+            return None
+        stdout = self.process.stdout
+        ready, _, _ = select.select([stdout], [], [], timeout)
+        if not ready:
+            return None
+        line = stdout.readline()
+        return line if line else None
+
+    def _drain(self, timeout: float) -> None:
+        """Discard pending engine output, waiting at most ``timeout`` seconds."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._read_line(deadline - time.monotonic()) is None:
+                break
+
+    def _error_result(self, error: str) -> dict:
+        """Return the standard dict shape for a failed evaluation."""
+        return {"cp": 0, "mate": None, "bestmove": None, "pv": [], "error": error}
 
     def evaluate(
         self, fen: str, depth: int = STOCKFISH_DEPTH, timeout: float = STOCKFISH_TIMEOUT
@@ -196,76 +254,60 @@ class StockfishEngine:
           - mate: mate in N moves (None if no forced mate found within depth)
           - bestmove: UCI best move
           - pv: principal variation (list of UCI moves)
+
+        On failure, the dict also contains an ``error`` key describing what
+        went wrong (engine unavailable, timeout, or unexpected termination).
         """
         with self.lock:
             if not self.process or self.process.poll() is not None:
                 log.warning("Stockfish not running, attempting restart...")
                 self.start()
                 if not self.process or self.process.poll() is not None:
-                    return {
-                        "cp": 0,
-                        "mate": None,
-                        "bestmove": None,
-                        "pv": [],
-                        "error": "Engine unavailable",
-                    }
+                    return self._error_result("engine unavailable")
 
-            # Process is guaranteed alive here; capture stdout for type narrowing
-            stdout = self.process.stdout
-            assert stdout is not None
+            # Process is guaranteed alive here; stdout must be connected.
+            assert self.process.stdout is not None
 
             # Cancel any in-progress search (no-op if idle) and drain stale
-            # output from a previous timeout.  Without this, leftover
+            # output from a previous timeout. Without this, leftover
             # "bestmove" / "info" lines from a prior search would pollute the
             # pipe and cause the next evaluation to return wrong scores.
             self._send("stop")
-            while True:
-                ready, _, _ = select.select([stdout], [], [], 0.05)
-                if not ready:
-                    break
-                line = stdout.readline()
-                if not line or line.strip().startswith("bestmove"):
-                    break
+            self._drain(0.2)
 
             # Send position and go command
             self._send(f"position fen {fen}")
             self._send(f"go depth {depth}")
 
-            cp = 0
-            mate = None
-            bestmove = None
-            pv = []
-            deadline = time.time() + timeout
+            state: dict = {"cp": 0, "mate": None, "bestmove": None, "pv": []}
+            deadline = time.monotonic() + timeout
 
-            while time.time() < deadline:
-                line = stdout.readline()
-                if not line:
-                    break
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._send("stop")
+                    self._drain(0.5)
+                    return self._error_result(f"timed out after {timeout:.0f}s")
 
-                line = line.strip()
+                line = self._read_line(remaining)
+                if line is None:
+                    # EOF means the process died; otherwise we simply did not
+                    # receive a complete line before the deadline (a timeout).
+                    if self.process.poll() is not None:
+                        return self._error_result("engine terminated unexpectedly")
+                    self._send("stop")
+                    self._drain(0.5)
+                    return self._error_result(f"timed out after {timeout:.0f}s")
 
-                # Parse bestmove
-                m = re.match(r"^bestmove\s+(\S+)", line)
-                if m:
-                    bestmove = m.group(1)
-                    break  # bestmove is the last line
+                if parse_stockfish_line(line, state):
+                    break  # bestmove line terminates the search
 
-                # Parse score
-                if "score cp" in line:
-                    m = re.search(r"score cp\s+(-?\d+)", line)
-                    if m:
-                        cp = int(m.group(1))
-                elif "score mate" in line:
-                    m = re.search(r"score mate\s+(-?\d+)", line)
-                    if m:
-                        mate = int(m.group(1))
-
-                # Parse PV (only take the last one before bestmove)
-                pv_match = re.search(r"\bpv\s+(.*)", line)
-                if pv_match:
-                    pv = pv_match.group(1).split()
-
-            return {"cp": cp, "mate": mate, "bestmove": bestmove, "pv": pv}
+            return {
+                "cp": state["cp"],
+                "mate": state["mate"],
+                "bestmove": state["bestmove"],
+                "pv": state["pv"],
+            }
 
 
 # Global engine instance
@@ -305,7 +347,7 @@ def build_position_database():
     extracted = []
     game_count = 0
 
-    with open(PGN_FILE, "r", encoding="utf-8", errors="replace") as f:
+    with open(PGN_FILE, encoding="utf-8", errors="replace") as f:
         while True:
             try:
                 game = chess.pgn.read_game(f)
@@ -319,7 +361,8 @@ def build_position_database():
             game_count += 1
             if game_count % 2000 == 0:
                 log.info(
-                    f"  Parsed {game_count} games, collected {len(extracted)} positions..."
+                    f"  Parsed {game_count} games, collected "
+                    f"{len(extracted)} positions..."
                 )
 
             # Skip non-standard variants (Chess960, etc.)
@@ -362,7 +405,8 @@ def build_position_database():
         POSITIONS_FILE.write_text("\n".join(extracted), encoding="utf-8")
         positions = extracted
         log.info(
-            f"Parsed {game_count} games, built database with {len(positions)} positions."
+            f"Parsed {game_count} games, built database with "
+            f"{len(positions)} positions."
         )
     else:
         log.warning("No qualifying positions extracted from PGN.")
@@ -429,6 +473,12 @@ async def get_position():
 
     # Evaluate with Stockfish
     eval_result = engine.evaluate(fen)
+    if eval_result.get("error"):
+        log.error(f"Stockfish evaluation failed: {eval_result['error']}")
+        raise HTTPException(
+            status_code=503,
+            detail="Analysis engine is busy or unavailable. Please try again.",
+        )
 
     cp = eval_result.get("cp", 0)
     mate = eval_result.get("mate")
@@ -470,9 +520,7 @@ async def get_position():
         "mate": mate,
         "bestmove": bestmove_san,
         "pv": pv_san,
-        "category": classify_eval(
-            cp if mate is None else (10000 if mate > 0 else -10000)
-        ),
+        "category": evaluation_category(cp, mate),
     }
 
     # Clean old sessions (keep max 1000)

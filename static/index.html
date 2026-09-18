@@ -589,7 +589,14 @@
 
                 try {
                     const res = await fetch("/api/position");
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    if (!res.ok) {
+                        let detail = `HTTP ${res.status}`;
+                        try {
+                            const err = await res.json();
+                            if (err.detail) detail = err.detail;
+                        } catch {}
+                        throw new Error(detail);
+                    }
                     const data = await res.json();
 
                     currentSessionId = data.session_id;
