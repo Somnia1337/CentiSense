@@ -1,0 +1,59 @@
+import unittest
+
+import chess
+from fastapi import HTTPException
+
+import main
+
+
+class TestApplyMove(unittest.TestCase):
+    def test_legal_move_alternates_turn(self):
+        result = main.apply_move(chess.STARTING_FEN, "e2e4")
+        self.assertEqual(result["side_to_move"], "black")
+        self.assertEqual(result["san"], "e4")
+        self.assertIn("e7e5", result["legal_moves"])
+
+    def test_illegal_move_raises(self):
+        with self.assertRaises(HTTPException) as ctx:
+            main.apply_move(chess.STARTING_FEN, "e2e5")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_wrong_side_to_move_raises(self):
+        # White to move; a black pawn move is not among white's legal moves.
+        with self.assertRaises(HTTPException) as ctx:
+            main.apply_move(chess.STARTING_FEN, "e7e5")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_invalid_move_notation_raises(self):
+        with self.assertRaises(HTTPException):
+            main.apply_move(chess.STARTING_FEN, "x9x9")
+
+    def test_invalid_fen_raises(self):
+        with self.assertRaises(HTTPException):
+            main.apply_move("not a real fen", "e2e4")
+
+    def test_castling_is_legal(self):
+        fen = "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1"
+        result = main.apply_move(fen, "e1g1")
+        self.assertEqual(result["side_to_move"], "black")
+        self.assertEqual(result["san"], "O-O")
+
+    def test_promotion_requires_promotion_piece(self):
+        fen = "8/P7/8/8/8/8/8/k6K w - - 0 1"
+        with self.assertRaises(HTTPException):
+            main.apply_move(fen, "a7a8")
+        result = main.apply_move(fen, "a7a8q")
+        self.assertEqual(result["side_to_move"], "black")
+
+
+class TestRenderBoard(unittest.TestCase):
+    def test_svg_contains_square_labels(self):
+        board, svg = main.render_board(chess.STARTING_FEN)
+        self.assertEqual(board.fen(), chess.STARTING_FEN)
+        self.assertIn('class="square', svg)
+        self.assertIn("a1", svg)
+        self.assertIn("h8", svg)
+
+
+if __name__ == "__main__":
+    unittest.main()

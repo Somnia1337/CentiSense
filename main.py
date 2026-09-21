@@ -421,6 +421,51 @@ def build_position_database():
 sessions: dict[str, dict] = {}
 
 
+def render_board(fen: str) -> tuple[chess.Board, str]:
+    """Render an SVG board for the given FEN, flipped for the side to move."""
+    board = chess.Board(fen)
+    flipped = not board.turn
+    svg_data = chess.svg.board(board=board, size=400, flipped=flipped)
+    return board, svg_data
+
+
+def apply_move(fen: str, move_uci: str) -> dict:
+    """Validate and apply a UCI move to a position, returning the new state.
+
+    Raises HTTPException(400) for missing/invalid input or illegal moves.
+    The returned dict contains the new FEN, SVG, side to move and legal moves.
+    """
+    if not isinstance(fen, str) or not fen:
+        raise HTTPException(status_code=400, detail="Missing or invalid FEN.")
+    if not isinstance(move_uci, str) or not move_uci:
+        raise HTTPException(status_code=400, detail="Missing or invalid move.")
+
+    try:
+        board = chess.Board(fen)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid FEN.") from None
+
+    try:
+        move = chess.Move.from_uci(move_uci)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid move notation.") from None
+
+    if move not in board.legal_moves:
+        raise HTTPException(status_code=400, detail="Illegal move.")
+
+    san = board.san(move)
+    board.push(move)
+    _, svg_data = render_board(board.fen())
+
+    return {
+        "fen": board.fen(),
+        "svg": svg_data,
+        "side_to_move": "white" if board.turn else "black",
+        "legal_moves": [m.uci() for m in board.legal_moves],
+        "san": san,
+    }
+
+
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
@@ -463,11 +508,8 @@ async def get_position():
 
     # Generate SVG board
     try:
-        board = chess.Board(fen)
-        # Flip board when black is to move, for intuitive viewing
-        flipped = not board.turn
-        svg_data = chess.svg.board(board=board, size=400, flipped=flipped)
-    except Exception:
+        board, svg_data = render_board(fen)
+    except ValueError:
         board = chess.Board()
         svg_data = chess.svg.board(board=board, size=400)
 
@@ -537,7 +579,15 @@ async def get_position():
         "fen": fen,
         "svg": svg_data,
         "side_to_move": side_to_move,
+        "legal_moves": [move.uci() for move in board.legal_moves],
     }
+
+
+@app.post("/api/move")
+async def make_move(request: Request):
+    """Apply a move to a position, validating legality server-side."""
+    body = await request.json()
+    return apply_move(body.get("fen"), body.get("move"))
 
 
 @app.post("/api/guess")

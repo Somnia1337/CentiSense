@@ -417,6 +417,44 @@
                 background: var(--surface);
             }
 
+            /* ---- Interactive board ---- */
+            .turn-badge {
+                font-weight: 500;
+                font-size: 0.78rem;
+                padding: 3px 12px;
+                border-radius: 4px;
+                background: var(--surface2);
+                border: 1px solid var(--border);
+            }
+            .reset-btn {
+                font-size: 0.78rem;
+                padding: 4px 14px;
+                border-radius: 4px;
+                background: var(--surface2);
+                border: 1px solid var(--border);
+                color: var(--text);
+                cursor: pointer;
+                transition: background var(--transition);
+            }
+            .reset-btn:hover {
+                background: #2a2a35;
+            }
+            .board-message {
+                min-height: 18px;
+                font-size: 0.75rem;
+                color: var(--incorrect);
+                text-align: center;
+            }
+            rect.square {
+                cursor: pointer;
+            }
+            rect.square.selected {
+                fill: #c9a83a;
+            }
+            rect.square.target {
+                fill: rgba(90, 158, 111, 0.55);
+            }
+
             @media (max-width: 700px) {
                 .main-layout {
                     flex-direction: column;
@@ -447,6 +485,18 @@
                 <!-- Board -->
                 <div class="board-section">
                     <div class="board-container" id="board-container"></div>
+                    <div class="board-meta">
+                        <span class="turn-badge" id="turn-badge"></span>
+                        <button
+                            class="reset-btn"
+                            id="reset-btn"
+                            type="button"
+                            onclick="resetBoard()"
+                        >
+                            Reset
+                        </button>
+                    </div>
+                    <div class="board-message" id="board-message"></div>
                     <div class="board-meta">
                         <span
                             class="side-badge"
@@ -567,6 +617,16 @@
             let correctCount = 0;
             let totalCount = 0;
 
+            // Interactive board state
+            let currentFen = null;
+            let sideToMove = null;
+            let legalMoves = [];
+            let pieceMap = {};
+            let selectedSquare = null;
+            let isMoving = false;
+            let originalPosition = null;
+            let boardMessageTimer = null;
+
             async function loadPosition() {
                 if (isLoading) return;
                 isLoading = true;
@@ -582,6 +642,8 @@
                     .classList.add("visible");
                 document.getElementById("fen-badge").textContent = "";
                 document.getElementById("guess-heading").textContent = "";
+                document.getElementById("turn-badge").textContent = "";
+                document.getElementById("board-message").textContent = "";
 
                 document
                     .querySelectorAll(".eval-btn")
@@ -601,6 +663,14 @@
 
                     currentSessionId = data.session_id;
 
+                    // Cache the original position so Reset can restore it.
+                    originalPosition = {
+                        fen: data.fen,
+                        svg: data.svg,
+                        side_to_move: data.side_to_move,
+                        legal_moves: data.legal_moves || [],
+                    };
+
                     // Hide loading overlay, show main content
                     document
                         .getElementById("loading-overlay")
@@ -609,14 +679,12 @@
                         .getElementById("main-content")
                         .classList.remove("hidden");
 
-                    document.getElementById("board-container").innerHTML =
-                        data.svg;
+                    renderBoard(data);
 
                     // FEN in clickable badge
-                    const fenBadge = document.getElementById("fen-badge");
-                    fenBadge.textContent = data.fen;
+                    document.getElementById("fen-badge").textContent = data.fen;
 
-                    // Side to move as panel heading
+                    // Side to move as panel heading (the position being judged)
                     document.getElementById("guess-heading").textContent =
                         data.side_to_move === "white"
                             ? "White to move"
@@ -742,6 +810,188 @@
                     .classList.remove("visible");
                 document.getElementById("guess-panel").style.display = "block";
                 loadPosition();
+            }
+
+            function parseFen(fen) {
+                const files = "abcdefgh";
+                const map = {};
+                const ranks = fen.split(" ")[0].split("/");
+                for (let i = 0; i < 8; i++) {
+                    let file = 0;
+                    for (const ch of ranks[i]) {
+                        if (ch >= "1" && ch <= "8") {
+                            file += parseInt(ch, 10);
+                        } else {
+                            const color =
+                                ch === ch.toUpperCase() ? "white" : "black";
+                            map[files[file] + String(8 - i)] = {
+                                type: ch.toLowerCase(),
+                                color,
+                            };
+                            file++;
+                        }
+                    }
+                }
+                return map;
+            }
+
+            function squareFromRect(rect) {
+                const tokens = (rect.getAttribute("class") || "").split(/\s+/);
+                return tokens.find((t) => /^[a-h][1-8]$/.test(t)) || null;
+            }
+
+            function destinationsFrom(square) {
+                return legalMoves
+                    .filter((m) => m.startsWith(square))
+                    .map((m) => m.slice(2, 4));
+            }
+
+            function moveUci(from, to) {
+                let uci = from + to;
+                const piece = pieceMap[from];
+                if (
+                    piece &&
+                    piece.type === "p" &&
+                    (to[1] === "1" || to[1] === "8")
+                ) {
+                    uci += "q"; // auto-promote to queen
+                }
+                return uci;
+            }
+
+            function highlight() {
+                const targets = destinationsFrom(selectedSquare);
+                document
+                    .getElementById("board-container")
+                    .querySelectorAll("rect.square")
+                    .forEach((rect) => {
+                        const sq = squareFromRect(rect);
+                        rect.classList.remove("selected", "target");
+                        if (sq === selectedSquare) {
+                            rect.classList.add("selected");
+                        } else if (targets.includes(sq)) {
+                            rect.classList.add("target");
+                        }
+                    });
+            }
+
+            function clearSelection() {
+                selectedSquare = null;
+                document
+                    .getElementById("board-container")
+                    .querySelectorAll(
+                        "rect.square.selected, rect.square.target"
+                    )
+                    .forEach((r) => r.classList.remove("selected", "target"));
+            }
+
+            function showBoardMessage(text) {
+                const el = document.getElementById("board-message");
+                el.textContent = text;
+                if (boardMessageTimer) clearTimeout(boardMessageTimer);
+                boardMessageTimer = setTimeout(() => (el.textContent = ""), 2500);
+            }
+
+            function onSquareClick(square) {
+                if (isLoading || isMoving) return;
+                const piece = pieceMap[square];
+
+                if (!selectedSquare) {
+                    if (piece && piece.color === sideToMove) {
+                        selectedSquare = square;
+                        highlight();
+                    }
+                    return;
+                }
+
+                if (square === selectedSquare) {
+                    clearSelection();
+                    return;
+                }
+
+                if (destinationsFrom(selectedSquare).includes(square)) {
+                    submitMove(selectedSquare, square);
+                    return;
+                }
+
+                if (piece && piece.color === sideToMove) {
+                    selectedSquare = square;
+                    highlight();
+                } else {
+                    clearSelection();
+                }
+            }
+
+            function attachBoardHandlers(container) {
+                const svg = container.querySelector("svg");
+                if (!svg) return;
+                // Let clicks pass through pieces to the square underneath.
+                svg.querySelectorAll("use").forEach(
+                    (u) => (u.style.pointerEvents = "none")
+                );
+                svg.querySelectorAll("rect.square").forEach((rect) => {
+                    const square = squareFromRect(rect);
+                    if (square) {
+                        rect.addEventListener("click", () =>
+                            onSquareClick(square)
+                        );
+                    }
+                });
+            }
+
+            function renderBoard(data) {
+                currentFen = data.fen;
+                sideToMove = data.side_to_move;
+                legalMoves = data.legal_moves || [];
+                pieceMap = parseFen(currentFen);
+                selectedSquare = null;
+
+                const container = document.getElementById("board-container");
+                container.innerHTML = data.svg;
+                attachBoardHandlers(container);
+
+                document.getElementById("turn-badge").textContent =
+                    sideToMove === "white" ? "White to move" : "Black to move";
+            }
+
+            async function submitMove(from, to) {
+                if (isMoving) return;
+                isMoving = true;
+                clearSelection();
+                try {
+                    const res = await fetch("/api/move", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            fen: currentFen,
+                            move: moveUci(from, to),
+                        }),
+                    });
+                    if (!res.ok) {
+                        let detail = `HTTP ${res.status}`;
+                        try {
+                            const err = await res.json();
+                            if (err.detail) detail = err.detail;
+                        } catch {}
+                        throw new Error(detail);
+                    }
+                    const data = await res.json();
+                    renderBoard(data);
+                    document.getElementById("fen-badge").textContent = data.fen;
+                    document.getElementById("board-message").textContent = "";
+                } catch (err) {
+                    showBoardMessage(err.message);
+                } finally {
+                    isMoving = false;
+                }
+            }
+
+            function resetBoard() {
+                if (isMoving || !originalPosition) return;
+                renderBoard(originalPosition);
+                document.getElementById("fen-badge").textContent =
+                    originalPosition.fen;
+                document.getElementById("board-message").textContent = "";
             }
 
             document.querySelectorAll(".eval-btn").forEach((btn) => {
