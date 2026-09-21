@@ -6,6 +6,7 @@ lets users judge the evaluation, and reveals Stockfish 19 analysis.
 """
 
 import logging
+import os
 import random
 import re
 import select
@@ -170,6 +171,7 @@ class StockfishEngine:
         self.path = path
         self.process: subprocess.Popen | None = None
         self.lock = threading.Lock()
+        self._read_buf = b""
 
     def start(self):
         log.info("Starting Stockfish engine...")
@@ -182,6 +184,7 @@ class StockfishEngine:
                 text=True,
                 bufsize=1,
             )
+            self._read_buf = b""
             # Init UCI mode
             self._send("uci")
             self._wait_for("uciok", timeout=5.0)
@@ -224,15 +227,39 @@ class StockfishEngine:
         return False
 
     def _read_line(self, timeout: float) -> str | None:
-        """Read one line from the engine, returning None on timeout or EOF."""
+        """Read one line from the engine, returning None on timeout or EOF.
+
+        Reads raw bytes from the unbuffered file descriptor. Using the buffered
+        ``stdout.readline()`` together with ``select`` is unreliable: ``readline``
+        can pull several lines into Python's buffer at once, after which
+        ``select`` no longer reports the descriptor as readable even though
+        buffered lines remain, so every call would block for the full timeout.
+        """
         if not self.process or not self.process.stdout:
             return None
-        stdout = self.process.stdout
-        ready, _, _ = select.select([stdout], [], [], timeout)
-        if not ready:
-            return None
-        line = stdout.readline()
-        return line if line else None
+        fd = self.process.stdout.fileno()
+        deadline = time.monotonic() + timeout
+        while True:
+            if b"\n" in self._read_buf:
+                line, self._read_buf = self._read_buf.split(b"\n", 1)
+                return line.decode("utf-8", errors="replace")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                return None
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                return None
+            if not chunk:
+                # EOF: return any final unterminated line.
+                if self._read_buf:
+                    line, self._read_buf = self._read_buf, b""
+                    return line.decode("utf-8", errors="replace")
+                return None
+            self._read_buf += chunk
 
     def _drain(self, timeout: float) -> None:
         """Discard pending engine output, waiting at most ``timeout`` seconds."""
