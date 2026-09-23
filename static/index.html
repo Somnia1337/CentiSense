@@ -131,20 +131,6 @@
                 font-size: 0.75rem;
                 color: var(--text-secondary);
             }
-            .side-badge {
-                font-weight: 500;
-                font-size: 0.78rem;
-                margin-top: 12px;
-                padding: 3px 12px;
-                border-radius: 4px;
-                background: var(--surface2);
-                border: 1px solid var(--border);
-                cursor: pointer;
-                transition: background var(--transition);
-            }
-            .side-badge:hover {
-                background: #2a2a35;
-            }
             .fen-display {
                 font-family: "SF Mono", "Fira Code", "Consolas", monospace;
                 font-size: 0.68rem;
@@ -418,13 +404,86 @@
             }
 
             /* ---- Interactive board ---- */
-            .turn-badge {
+            .analyze-btn {
                 font-weight: 500;
                 font-size: 0.78rem;
                 padding: 3px 12px;
                 border-radius: 4px;
                 background: var(--surface2);
                 border: 1px solid var(--border);
+                color: var(--text);
+                cursor: pointer;
+                font-family: inherit;
+                transition: background var(--transition);
+            }
+            .analyze-btn:hover {
+                background: #2a2a35;
+            }
+
+            /* ---- Position menu modal ---- */
+            .modal-overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.55);
+                align-items: center;
+                justify-content: center;
+                z-index: 100;
+            }
+            .modal-overlay.visible {
+                display: flex;
+            }
+            .modal {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 20px 24px;
+                width: 280px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            }
+            .modal-title {
+                font-size: 0.8rem;
+                font-weight: 600;
+                color: var(--text);
+                letter-spacing: 0.4px;
+            }
+            .modal-fen {
+                font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+                font-size: 0.68rem;
+                color: var(--text-muted);
+                word-break: break-all;
+                line-height: 1.5;
+                margin-bottom: 4px;
+            }
+            .modal-btn {
+                padding: 10px 14px;
+                border-radius: 6px;
+                border: 1px solid var(--border);
+                background: var(--surface2);
+                color: var(--text);
+                font-size: 0.9rem;
+                cursor: pointer;
+                text-align: left;
+                transition: background var(--transition);
+            }
+            .modal-btn:hover {
+                background: #2a2a35;
+            }
+            .modal-close {
+                padding: 8px 14px;
+                border-radius: 6px;
+                border: none;
+                background: transparent;
+                color: var(--text-secondary);
+                font-size: 0.82rem;
+                cursor: pointer;
+                text-align: center;
+            }
+            .modal-close:hover {
+                color: var(--text);
             }
             .reset-btn {
                 font-size: 0.78rem;
@@ -486,7 +545,6 @@
                 <div class="board-section">
                     <div class="board-container" id="board-container"></div>
                     <div class="board-meta">
-                        <span class="turn-badge" id="turn-badge"></span>
                         <button
                             class="reset-btn"
                             id="reset-btn"
@@ -495,15 +553,16 @@
                         >
                             Reset
                         </button>
+                        <button
+                            class="analyze-btn"
+                            id="analyze-btn"
+                            type="button"
+                            onclick="openPositionMenu()"
+                        >
+                            Analyze
+                        </button>
                     </div>
                     <div class="board-message" id="board-message"></div>
-                    <div class="board-meta">
-                        <span
-                            class="side-badge"
-                            id="fen-badge"
-                            title="Click to copy FEN"
-                        ></span>
-                    </div>
                 </div>
 
                 <!-- Controls -->
@@ -611,6 +670,35 @@
             </div>
         </div>
 
+        <div class="modal-overlay" id="position-menu">
+            <div class="modal">
+                <div class="modal-title">Position</div>
+                <div class="modal-fen" id="modal-fen"></div>
+                <button
+                    class="modal-btn"
+                    id="copy-fen-btn"
+                    type="button"
+                    onclick="copyFen()"
+                >
+                    Copy FEN
+                </button>
+                <button
+                    class="modal-btn"
+                    type="button"
+                    onclick="openLichess()"
+                >
+                    Analyze on Lichess
+                </button>
+                <button
+                    class="modal-close"
+                    type="button"
+                    onclick="closePositionMenu()"
+                >
+                    Cancel
+                </button>
+            </div>
+        </div>
+
         <script>
             let currentSessionId = null;
             let isLoading = false;
@@ -668,9 +756,7 @@
                     .getElementById("result-panel")
                     .classList.remove("visible");
                 document.getElementById("guess-panel").style.display = "block";
-                document.getElementById("fen-badge").textContent = "";
                 document.getElementById("guess-heading").textContent = "";
-                document.getElementById("turn-badge").textContent = "";
                 document.getElementById("board-message").textContent = "";
 
                 document
@@ -720,9 +806,6 @@
                 };
 
                 renderBoard(data);
-
-                // FEN in clickable badge
-                document.getElementById("fen-badge").textContent = data.fen;
 
                 // Side to move as panel heading (the position being judged)
                 document.getElementById("guess-heading").textContent =
@@ -979,9 +1062,6 @@
                 const container = document.getElementById("board-container");
                 container.innerHTML = data.svg;
                 attachBoardHandlers(container);
-
-                document.getElementById("turn-badge").textContent =
-                    sideToMove === "white" ? "White to move" : "Black to move";
             }
 
             async function submitMove(from, to) {
@@ -1010,7 +1090,6 @@
                     }
                     const data = await res.json();
                     renderBoard(data);
-                    document.getElementById("fen-badge").textContent = data.fen;
                     document.getElementById("board-message").textContent = "";
                 } catch (err) {
                     showBoardMessage(err.message);
@@ -1022,8 +1101,6 @@
             function resetBoard() {
                 if (isMoving || !originalPosition) return;
                 renderBoard(originalPosition);
-                document.getElementById("fen-badge").textContent =
-                    originalPosition.fen;
                 document.getElementById("board-message").textContent = "";
             }
 
@@ -1056,46 +1133,61 @@
                 }
             });
 
-            // FEN badge: click to copy
+            // Position menu (Copy FEN / Lichess)
+            function openPositionMenu() {
+                if (!originalPosition) return;
+                document.getElementById("modal-fen").textContent =
+                    originalPosition.fen;
+                document.getElementById("position-menu").classList.add("visible");
+            }
+
+            function closePositionMenu() {
+                document.getElementById("position-menu").classList.remove("visible");
+            }
+
+            function copyFen() {
+                if (!originalPosition) return;
+                const fen = originalPosition.fen;
+                const btn = document.getElementById("copy-fen-btn");
+                const done = () => {
+                    const original = btn.textContent;
+                    btn.textContent = "Copied!";
+                    setTimeout(() => (btn.textContent = original), 1200);
+                };
+                navigator.clipboard
+                    .writeText(fen)
+                    .then(done)
+                    .catch(() => {
+                        const ta = document.createElement("textarea");
+                        ta.value = fen;
+                        ta.style.position = "fixed";
+                        ta.style.opacity = "0";
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand("copy");
+                        document.body.removeChild(ta);
+                        done();
+                    });
+            }
+
+            function openLichess() {
+                if (!originalPosition) return;
+                const url =
+                    "https://lichess.org/analysis/" +
+                    originalPosition.fen.replace(/ /g, "_");
+                window.open(url, "_blank", "noopener");
+                closePositionMenu();
+            }
+
             document
-                .getElementById("fen-badge")
-                .addEventListener("click", () => {
-                    const badge = document.getElementById("fen-badge");
-                    const fen = badge.textContent;
-                    if (!fen) return;
-                    navigator.clipboard
-                        .writeText(fen)
-                        .then(() => {
-                            badge.style.borderColor = "var(--correct)";
-                            badge.style.color = "var(--correct)";
-                            // Show floating tooltip so badge width stays stable
-                            const tip = document.createElement("span");
-                            tip.textContent = "Copied";
-                            tip.style.cssText =
-                                "position:absolute;top:-24px;left:50%;transform:translateX(-50%);" +
-                                "font-size:0.7rem;color:var(--correct);background:var(--surface2);" +
-                                "padding:2px 8px;border-radius:3px;border:1px solid var(--correct);" +
-                                "white-space:nowrap;pointer-events:none;z-index:10;";
-                            badge.style.position = "relative";
-                            badge.appendChild(tip);
-                            setTimeout(() => {
-                                tip.remove();
-                                badge.style.borderColor = "";
-                                badge.style.color = "";
-                                badge.style.position = "";
-                            }, 1000);
-                        })
-                        .catch(() => {
-                            const ta = document.createElement("textarea");
-                            ta.value = fen;
-                            ta.style.position = "fixed";
-                            ta.style.opacity = "0";
-                            document.body.appendChild(ta);
-                            ta.select();
-                            document.execCommand("copy");
-                            document.body.removeChild(ta);
-                        });
+                .getElementById("position-menu")
+                .addEventListener("click", (e) => {
+                    if (e.target === e.currentTarget) closePositionMenu();
                 });
+
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") closePositionMenu();
+            });
 
             loadPosition();
         </script>
