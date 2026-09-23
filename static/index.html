@@ -315,6 +315,30 @@
                 border-radius: 5px;
                 word-break: break-all;
             }
+            .pv-move {
+                padding: 1px 3px;
+                border-radius: 3px;
+                transition:
+                    background var(--transition),
+                    color var(--transition);
+            }
+            .pv-move.active {
+                background: var(--accent);
+                color: #fff;
+            }
+            .apply-btn {
+                font-size: 0.72rem;
+                padding: 2px 10px;
+                border-radius: 4px;
+                background: var(--surface2);
+                border: 1px solid var(--border);
+                color: var(--text);
+                cursor: pointer;
+                transition: background var(--transition);
+            }
+            .apply-btn:hover {
+                background: #2a2a35;
+            }
 
             .next-btn-wrap {
                 margin-top: 14px;
@@ -645,7 +669,8 @@
                         </div>
                         <div class="shortcut-hint">
                             Keys <kbd>1</kbd>&ndash;<kbd>7</kbd> &middot;
-                            <kbd>Space</kbd> next
+                            <kbd>Space</kbd> next &middot;
+                            <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> history
                         </div>
                     </div>
 
@@ -732,6 +757,14 @@
             let originalPosition = null;
             let boardMessageTimer = null;
 
+            // Move history (single main line) for ←/→ navigation
+            let moveHistory = [];
+            let historyIndex = 0;
+
+            // Principal variation (Apply) state
+            let currentPv = null;
+            let pvActive = false;
+
             // Background preloading of the next position
             let preloadedPosition = null;
             let preloadInFlight = false;
@@ -775,6 +808,8 @@
                 document.getElementById("guess-panel").style.display = "block";
                 document.getElementById("guess-heading").textContent = "";
                 document.getElementById("board-message").textContent = "";
+                currentPv = null;
+                cancelPv();
 
                 document
                     .querySelectorAll(".eval-btn")
@@ -823,6 +858,10 @@
                 };
 
                 renderBoard(data);
+
+                // Start a fresh move history for this position.
+                moveHistory = [makeState(data)];
+                historyIndex = 0;
 
                 // Side to move as panel heading (the position being judged)
                 document.getElementById("guess-heading").textContent =
@@ -886,10 +925,25 @@
                     black_winning: "Black winning",
                 };
 
+                currentPv = {
+                    san: result.pv || [],
+                    states: result.pv_states || [],
+                };
+                pvActive = false;
+
                 let pvHTML = "";
-                if (result.pv && result.pv.length > 0) {
-                    pvHTML = `<div class="detail-row"><span class="detail-label">Principal variation</span></div>
-                          <div class="pv-line">${result.pv.join(" ")}</div>`;
+                if (currentPv.san.length > 0) {
+                    const moves = currentPv.san
+                        .map(
+                            (san, i) =>
+                                `<span class="pv-move" data-index="${i + 1}">${san}</span>`
+                        )
+                        .join(" ");
+                    pvHTML = `<div class="detail-row">
+                          <span class="detail-label">Principal variation</span>
+                          <button class="apply-btn" id="apply-pv-btn" type="button" onclick="applyPv()">Apply</button>
+                        </div>
+                        <div class="pv-line">${moves}</div>`;
                 }
 
                 document.getElementById("result-content").innerHTML = `
@@ -1108,6 +1162,11 @@
                     const data = await res.json();
                     renderBoard(data);
                     document.getElementById("board-message").textContent = "";
+                    cancelPv();
+                    // Record the move: drop any undone future, then append.
+                    moveHistory = moveHistory.slice(0, historyIndex + 1);
+                    moveHistory.push(makeState(data));
+                    historyIndex = moveHistory.length - 1;
                 } catch (err) {
                     showBoardMessage(err.message);
                 } finally {
@@ -1118,7 +1177,56 @@
             function resetBoard() {
                 if (isMoving || !originalPosition) return;
                 renderBoard(originalPosition);
+                cancelPv();
+                moveHistory = [makeState(originalPosition)];
+                historyIndex = 0;
                 document.getElementById("board-message").textContent = "";
+            }
+
+            function makeState(data) {
+                return {
+                    fen: data.fen,
+                    svg: data.svg,
+                    side_to_move: data.side_to_move,
+                    legal_moves: data.legal_moves || [],
+                };
+            }
+
+            function navigateHistory(delta) {
+                if (isMoving) return;
+                const target = historyIndex + delta;
+                if (target < 0 || target >= moveHistory.length) return;
+                historyIndex = target;
+                renderBoard(moveHistory[historyIndex]);
+                if (pvActive) highlightPv();
+            }
+
+            function applyPv() {
+                if (!currentPv || !currentPv.states.length) return;
+                // Reset the history, then replay the PV line.
+                moveHistory = [makeState(originalPosition), ...currentPv.states];
+                historyIndex = 1; // play the first PV move
+                renderBoard(moveHistory[historyIndex]);
+                pvActive = true;
+                highlightPv();
+                document.getElementById("board-message").textContent = "";
+            }
+
+            function highlightPv() {
+                if (!pvActive || !currentPv) return;
+                document.querySelectorAll(".pv-move").forEach((el) => {
+                    el.classList.toggle(
+                        "active",
+                        parseInt(el.dataset.index, 10) === historyIndex
+                    );
+                });
+            }
+
+            function cancelPv() {
+                pvActive = false;
+                document
+                    .querySelectorAll(".pv-move.active")
+                    .forEach((el) => el.classList.remove("active"));
             }
 
             document.querySelectorAll(".eval-btn").forEach((btn) => {
@@ -1129,6 +1237,18 @@
 
             document.addEventListener("keydown", (e) => {
                 if (isLoading) return;
+
+                if (e.key === "ArrowLeft") {
+                    e.preventDefault();
+                    navigateHistory(-1);
+                    return;
+                }
+                if (e.key === "ArrowRight") {
+                    e.preventDefault();
+                    navigateHistory(1);
+                    return;
+                }
+
                 const map = {
                     1: "white_winning",
                     2: "white_big",

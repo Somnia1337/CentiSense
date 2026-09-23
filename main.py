@@ -461,6 +461,32 @@ def render_board(fen: str, flipped: bool | None = None) -> tuple[chess.Board, st
     return board, svg_data
 
 
+def build_pv_states(fen: str, san_moves: list[str]) -> list[dict]:
+    """Replay SAN moves from a position, returning each step's board state.
+
+    Each state contains ``fen``, ``svg``, ``side_to_move`` and ``legal_moves``.
+    Stops at the first move that fails to replay (returns what was built so far).
+    """
+    states = []
+    try:
+        board = chess.Board(fen)
+        flipped = not board.turn
+        for san in san_moves:
+            board.push(board.parse_san(san))
+            _, svg = render_board(board.fen(), flipped=flipped)
+            states.append(
+                {
+                    "fen": board.fen(),
+                    "svg": svg,
+                    "side_to_move": "white" if board.turn else "black",
+                    "legal_moves": [m.uci() for m in board.legal_moves],
+                }
+            )
+    except Exception:
+        pass  # Stop at the first move that fails to replay.
+    return states
+
+
 def apply_move(fen: str, move_uci: str, flipped: bool | None = None) -> dict:
     """Validate and apply a UCI move to a position, returning the new state.
 
@@ -673,6 +699,10 @@ async def submit_guess(request: Request):
     bestmove = session.get("bestmove") or "N/A"
     pv = session.get("pv", [])
 
+    # Replay the PV line to get each step's board state, so the client can fill
+    # its move history (for the "Apply" feature) without extra requests.
+    pv_states = build_pv_states(session["fen"], pv[:5])
+
     result = {
         "correct": is_correct,
         "guess_category": guess_category,
@@ -684,6 +714,7 @@ async def submit_guess(request: Request):
         "eval_text": eval_text,
         "bestmove": bestmove,
         "pv": pv[:5],  # Show up to 5 PV moves
+        "pv_states": pv_states,
     }
 
     # Clean up session

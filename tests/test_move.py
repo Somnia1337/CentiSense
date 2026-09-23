@@ -65,5 +65,25 @@ class TestRenderBoard(unittest.TestCase):
         self.assertIn("h8", svg)
 
 
+class TestBuildPvStates(unittest.TestCase):
+    def test_replays_san_moves(self):
+        states = main.build_pv_states(chess.STARTING_FEN, ["e4", "e5", "Nf3", "Nc6"])
+        self.assertEqual(len(states), 4)
+        self.assertEqual(states[0]["side_to_move"], "black")
+        self.assertEqual(states[1]["side_to_move"], "white")
+        self.assertEqual(states[2]["side_to_move"], "black")
+        self.assertEqual(states[3]["side_to_move"], "white")
+        self.assertIn('class="square', states[0]["svg"])
+        board = chess.Board(states[2]["fen"])
+        self.assertEqual(
+            board.fen().split(" ")[0],
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R",
+        )
+
+    def test_stops_on_invalid_move(self):
+        states = main.build_pv_states(chess.STARTING_FEN, ["e4", "not-a-move"])
+        self.assertEqual(len(states), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
