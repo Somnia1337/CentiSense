@@ -45,6 +45,16 @@ class TestApplyMove(unittest.TestCase):
         result = main.apply_move(fen, "a7a8q")
         self.assertEqual(result["side_to_move"], "black")
 
+    def test_move_does_not_flip_when_orientation_fixed(self):
+        # White to move; after e2e4 black is to move. With a fixed (non-flipped)
+        # orientation the board must stay white-at-the-bottom instead of flipping.
+        result = main.apply_move(chess.STARTING_FEN, "e2e4", flipped=False)
+        _, fixed_svg = main.render_board(result["fen"], flipped=False)
+        self.assertEqual(result["svg"], fixed_svg)
+        # Sanity: the default rendering of the new position flips for black.
+        _, auto_svg = main.render_board(result["fen"])
+        self.assertNotEqual(result["svg"], auto_svg)
+
 
 class TestRenderBoard(unittest.TestCase):
     def test_svg_contains_square_labels(self):

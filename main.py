@@ -448,19 +448,25 @@ def build_position_database():
 sessions: dict[str, dict] = {}
 
 
-def render_board(fen: str) -> tuple[chess.Board, str]:
-    """Render an SVG board for the given FEN, flipped for the side to move."""
+def render_board(fen: str, flipped: bool | None = None) -> tuple[chess.Board, str]:
+    """Render an SVG board for the given FEN.
+
+    ``flipped`` fixes the board orientation (True = black at the bottom).
+    When None, the board is flipped for the side to move.
+    """
     board = chess.Board(fen)
-    flipped = not board.turn
+    if flipped is None:
+        flipped = not board.turn
     svg_data = chess.svg.board(board=board, size=400, flipped=flipped)
     return board, svg_data
 
 
-def apply_move(fen: str, move_uci: str) -> dict:
+def apply_move(fen: str, move_uci: str, flipped: bool | None = None) -> dict:
     """Validate and apply a UCI move to a position, returning the new state.
 
     Raises HTTPException(400) for missing/invalid input or illegal moves.
     The returned dict contains the new FEN, SVG, side to move and legal moves.
+    ``flipped`` fixes the board orientation; when None it follows the side to move.
     """
     if not isinstance(fen, str) or not fen:
         raise HTTPException(status_code=400, detail="Missing or invalid FEN.")
@@ -482,7 +488,7 @@ def apply_move(fen: str, move_uci: str) -> dict:
 
     san = board.san(move)
     board.push(move)
-    _, svg_data = render_board(board.fen())
+    _, svg_data = render_board(board.fen(), flipped=flipped)
 
     return {
         "fen": board.fen(),
@@ -614,7 +620,10 @@ async def get_position():
 async def make_move(request: Request):
     """Apply a move to a position, validating legality server-side."""
     body = await request.json()
-    return apply_move(body.get("fen"), body.get("move"))
+    flip = body.get("flip")
+    if flip is not None and not isinstance(flip, bool):
+        raise HTTPException(status_code=400, detail="Invalid flip value.")
+    return apply_move(body.get("fen"), body.get("move"), flipped=flip)
 
 
 @app.post("/api/guess")

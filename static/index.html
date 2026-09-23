@@ -627,19 +627,47 @@
             let originalPosition = null;
             let boardMessageTimer = null;
 
+            // Background preloading of the next position
+            let preloadedPosition = null;
+            let preloadInFlight = false;
+
+            async function fetchPosition() {
+                const res = await fetch("/api/position");
+                if (!res.ok) {
+                    let detail = `HTTP ${res.status}`;
+                    try {
+                        const err = await res.json();
+                        if (err.detail) detail = err.detail;
+                    } catch {}
+                    throw new Error(detail);
+                }
+                return res.json();
+            }
+
+            function preloadNextPosition() {
+                if (preloadedPosition || preloadInFlight) return;
+                preloadInFlight = true;
+                fetchPosition()
+                    .then((data) => {
+                        preloadedPosition = data;
+                    })
+                    .catch(() => {
+                        preloadedPosition = null;
+                    })
+                    .finally(() => {
+                        preloadInFlight = false;
+                    });
+            }
+
             async function loadPosition() {
                 if (isLoading) return;
                 isLoading = true;
 
-                // Hide main content, show loading overlay
-                document.getElementById("main-content").classList.add("hidden");
+                // Reset the guessing UI for the new position.
                 document
                     .getElementById("result-panel")
                     .classList.remove("visible");
                 document.getElementById("guess-panel").style.display = "block";
-                document
-                    .getElementById("loading-overlay")
-                    .classList.add("visible");
                 document.getElementById("fen-badge").textContent = "";
                 document.getElementById("guess-heading").textContent = "";
                 document.getElementById("turn-badge").textContent = "";
@@ -649,61 +677,63 @@
                     .querySelectorAll(".eval-btn")
                     .forEach((b) => (b.disabled = false));
 
-                try {
-                    const res = await fetch("/api/position");
-                    if (!res.ok) {
-                        let detail = `HTTP ${res.status}`;
-                        try {
-                            const err = await res.json();
-                            if (err.detail) detail = err.detail;
-                        } catch {}
-                        throw new Error(detail);
+                // Use a background-preloaded position if available; otherwise
+                // fetch it (showing the loading overlay).
+                let data = preloadedPosition;
+                preloadedPosition = null;
+
+                if (!data) {
+                    document
+                        .getElementById("main-content")
+                        .classList.add("hidden");
+                    document
+                        .getElementById("loading-overlay")
+                        .classList.add("visible");
+                    try {
+                        data = await fetchPosition();
+                    } catch (err) {
+                        document.getElementById("board-container").innerHTML =
+                            `<div style="color:var(--incorrect);text-align:center;padding:40px;">
+                            Failed to load<br><small>${err.message}</small><br>
+                            <button onclick="loadPosition()" style="margin-top:12px;padding:6px 16px;border-radius:4px;cursor:pointer;">Retry</button>
+                        </div>`;
+                        isLoading = false;
+                        return;
+                    } finally {
+                        document
+                            .getElementById("loading-overlay")
+                            .classList.remove("visible");
+                        document
+                            .getElementById("main-content")
+                            .classList.remove("hidden");
                     }
-                    const data = await res.json();
-
-                    currentSessionId = data.session_id;
-
-                    // Cache the original position so Reset can restore it.
-                    originalPosition = {
-                        fen: data.fen,
-                        svg: data.svg,
-                        side_to_move: data.side_to_move,
-                        legal_moves: data.legal_moves || [],
-                    };
-
-                    // Hide loading overlay, show main content
-                    document
-                        .getElementById("loading-overlay")
-                        .classList.remove("visible");
-                    document
-                        .getElementById("main-content")
-                        .classList.remove("hidden");
-
-                    renderBoard(data);
-
-                    // FEN in clickable badge
-                    document.getElementById("fen-badge").textContent = data.fen;
-
-                    // Side to move as panel heading (the position being judged)
-                    document.getElementById("guess-heading").textContent =
-                        data.side_to_move === "white"
-                            ? "White to move"
-                            : "Black to move";
-                } catch (err) {
-                    document
-                        .getElementById("loading-overlay")
-                        .classList.remove("visible");
-                    document
-                        .getElementById("main-content")
-                        .classList.remove("hidden");
-                    document.getElementById("board-container").innerHTML =
-                        `<div style="color:var(--incorrect);text-align:center;padding:40px;">
-                        Failed to load<br><small>${err.message}</small><br>
-                        <button onclick="loadPosition()" style="margin-top:12px;padding:6px 16px;border-radius:4px;cursor:pointer;">Retry</button>
-                    </div>`;
-                } finally {
-                    isLoading = false;
                 }
+
+                currentSessionId = data.session_id;
+
+                // Cache the original position so Reset can restore it.
+                originalPosition = {
+                    fen: data.fen,
+                    svg: data.svg,
+                    side_to_move: data.side_to_move,
+                    legal_moves: data.legal_moves || [],
+                };
+
+                renderBoard(data);
+
+                // FEN in clickable badge
+                document.getElementById("fen-badge").textContent = data.fen;
+
+                // Side to move as panel heading (the position being judged)
+                document.getElementById("guess-heading").textContent =
+                    data.side_to_move === "white"
+                        ? "White to move"
+                        : "Black to move";
+
+                isLoading = false;
+
+                // Preload the next position while the player ponders this one.
+                preloadNextPosition();
             }
 
             async function submitGuess(category) {
@@ -965,6 +995,9 @@
                         body: JSON.stringify({
                             fen: currentFen,
                             move: moveUci(from, to),
+                            flip: originalPosition
+                                ? originalPosition.side_to_move === "black"
+                                : null,
                         }),
                     });
                     if (!res.ok) {
