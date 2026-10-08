@@ -461,6 +461,10 @@ def render_board(fen: str, flipped: bool | None = None) -> tuple[chess.Board, st
     return board, svg_data
 
 
+# Empty board (with coordinates) shown while a position is being analyzed.
+EMPTY_BOARD_SVG = chess.svg.board(None, size=400)
+
+
 def build_pv_states(fen: str, san_moves: list[str]) -> list[dict]:
     """Replay SAN moves from a position, returning each step's board state.
 
@@ -528,6 +532,12 @@ def apply_move(fen: str, move_uci: str, flipped: bool | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
+
+
+@app.get("/api/empty-board")
+async def empty_board():
+    """Return the empty board SVG (shown during analysis)."""
+    return {"svg": EMPTY_BOARD_SVG}
 
 
 @app.get("/api/health")

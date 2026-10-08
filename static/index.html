@@ -81,27 +81,46 @@
                 justify-content: center;
             }
 
-            /* ---- Loading overlay (replaces main-layout during analysis) ---- */
-            #loading-overlay {
-                display: none;
+            /* ---- Analyzing state: blank board with a spinner ---- */
+            .blank-board {
+                position: relative;
+                width: 100%;
+                height: 100%;
+                /* Fallback checkerboard (covered by the SVG when available). */
+                background:
+                    conic-gradient(
+                        #d18b47 90deg,
+                        #ffce9e 90deg 180deg,
+                        #d18b47 180deg 270deg,
+                        #ffce9e 270deg
+                    )
+                    0 0 / 25% 25%;
+            }
+            .blank-board svg {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+            .blank-board-overlay {
+                position: absolute;
+                inset: 0;
+                display: flex;
                 flex-direction: column;
                 align-items: center;
                 justify-content: center;
-                gap: 16px;
-                padding: 80px 20px;
-                color: var(--text-secondary);
-                font-size: 0.9rem;
+                gap: 12px;
+                pointer-events: none;
             }
-            #loading-overlay.visible {
-                display: flex;
+            .blank-board-overlay .spinner {
+                width: 30px;
+                height: 30px;
+                border: 3px solid rgba(0, 0, 0, 0.35);
+                border-top-color: #fff;
             }
-            #loading-overlay .spinner {
-                width: 28px;
-                height: 28px;
-                border-width: 3px;
-            }
-            #main-content.hidden {
-                display: none;
+            .blank-board-overlay span {
+                color: rgba(255, 255, 255, 0.95);
+                font-size: 0.82rem;
+                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
             }
 
             /* ---- Board ---- */
@@ -577,14 +596,17 @@
                 <p>Stockfish 19 &middot; depth 20</p>
             </header>
 
-            <div id="loading-overlay" class="visible">
-                <div class="spinner"></div>
-                <span>Stockfish analyzing...</span>
-            </div>
-            <div class="main-layout hidden" id="main-content">
+            <div class="main-layout" id="main-content">
                 <!-- Board -->
                 <div class="board-section">
-                    <div class="board-container" id="board-container"></div>
+                    <div class="board-container" id="board-container">
+                        <div class="blank-board">
+                            <div class="blank-board-overlay">
+                                <div class="spinner"></div>
+                                <span>Analyzing...</span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="board-meta">
                         <button
                             class="reset-btn"
@@ -765,6 +787,9 @@
             let currentPv = null;
             let pvActive = false;
 
+            // Empty board SVG (fetched once at startup) for the analyzing state.
+            let emptyBoardSvg = null;
+
             // Background preloading of the next position
             let preloadedPosition = null;
             let preloadInFlight = false;
@@ -782,6 +807,16 @@
                 return res.json();
             }
 
+            async function initEmptyBoard() {
+                try {
+                    const res = await fetch("/api/empty-board");
+                    if (res.ok) {
+                        const data = await res.json();
+                        emptyBoardSvg = data.svg;
+                    }
+                } catch {}
+            }
+
             function preloadNextPosition() {
                 if (preloadedPosition || preloadInFlight) return;
                 preloadInFlight = true;
@@ -795,6 +830,15 @@
                     .finally(() => {
                         preloadInFlight = false;
                     });
+            }
+
+            function showAnalyzingState() {
+                document
+                    .querySelectorAll(".eval-btn")
+                    .forEach((b) => (b.disabled = true));
+                const svg = emptyBoardSvg || "";
+                document.getElementById("board-container").innerHTML =
+                    `<div class="blank-board">${svg}<div class="blank-board-overlay"><div class="spinner"></div><span>Analyzing...</span></div></div>`;
             }
 
             async function loadPosition() {
@@ -811,22 +855,13 @@
                 currentPv = null;
                 cancelPv();
 
-                document
-                    .querySelectorAll(".eval-btn")
-                    .forEach((b) => (b.disabled = false));
-
                 // Use a background-preloaded position if available; otherwise
-                // fetch it (showing the loading overlay).
+                // fetch it (showing the analyzing state on the board).
                 let data = preloadedPosition;
                 preloadedPosition = null;
 
                 if (!data) {
-                    document
-                        .getElementById("main-content")
-                        .classList.add("hidden");
-                    document
-                        .getElementById("loading-overlay")
-                        .classList.add("visible");
+                    showAnalyzingState();
                     try {
                         data = await fetchPosition();
                     } catch (err) {
@@ -837,13 +872,6 @@
                         </div>`;
                         isLoading = false;
                         return;
-                    } finally {
-                        document
-                            .getElementById("loading-overlay")
-                            .classList.remove("visible");
-                        document
-                            .getElementById("main-content")
-                            .classList.remove("hidden");
                     }
                 }
 
@@ -868,6 +896,11 @@
                     data.side_to_move === "white"
                         ? "White to move"
                         : "Black to move";
+
+                // Enable the evaluation choices now that the position is ready.
+                document
+                    .querySelectorAll(".eval-btn")
+                    .forEach((b) => (b.disabled = false));
 
                 isLoading = false;
 
@@ -1326,7 +1359,7 @@
                 if (e.key === "Escape") closePositionMenu();
             });
 
-            loadPosition();
+            initEmptyBoard().then(loadPosition);
         </script>
     </body>
 </html>
