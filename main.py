@@ -41,6 +41,17 @@ MAX_PIECES = 26
 # Only consider positions at or after MIN_PLY (skip opening)
 MIN_PLY = 12
 
+# Target number of unique positions in the database.
+MAX_POSITIONS = 200_000
+# Maximum positions a single game may contribute (spreads coverage across games).
+MAX_PER_GAME = 6
+# Set CENTISENSE_REBUILD_DB=1 to rebuild positions.txt from the PGN at startup.
+REBUILD_DB = os.environ.get("CENTISENSE_REBUILD_DB", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # ---------------------------------------------------------------------------
 # Evaluation categories
 # ---------------------------------------------------------------------------
@@ -353,8 +364,8 @@ def build_position_database():
     """Parse the PGN file and extract qualifying positions."""
     global positions
 
-    # If we already have a pre-built positions file, load it
-    if POSITIONS_FILE.exists():
+    # Load the pre-built cache unless a rebuild was explicitly requested.
+    if POSITIONS_FILE.exists() and not REBUILD_DB:
         log.info(f"Loading positions from {POSITIONS_FILE}...")
         positions = [
             line.strip()
@@ -366,16 +377,18 @@ def build_position_database():
 
     if not PGN_FILE.exists():
         log.warning(
-            f"No PGN database found at {PGN_FILE}. Please download a PGN file first."
+            f"No PGN database found at {PGN_FILE}. "
+            "Please download a PGN file first (see README)."
         )
         return
 
     log.info(f"Parsing PGN file: {PGN_FILE}...")
-    extracted = []
+    seen: set[str] = set()
+    extracted: list[str] = []
     game_count = 0
 
     with open(PGN_FILE, encoding="utf-8", errors="replace") as f:
-        while True:
+        while len(extracted) < MAX_POSITIONS:
             try:
                 game = chess.pgn.read_game(f)
             except Exception as e:
@@ -386,46 +399,51 @@ def build_position_database():
                 break
 
             game_count += 1
-            if game_count % 2000 == 0:
+            if game_count % 5000 == 0:
                 log.info(
                     f"  Parsed {game_count} games, collected "
                     f"{len(extracted)} positions..."
                 )
 
             # Skip non-standard variants (Chess960, etc.)
-            variant = game.headers.get("Variant", "Standard")
-            if variant != "Standard":
+            if game.headers.get("Variant", "Standard") != "Standard":
                 continue
 
             board = game.board()
-            node = game
+            game_positions: list[str] = []
 
-            move_num = 0
-            while node := node.variations:
-                node = node[0]  # follow main line
-                move_num += 1
+            for move_num, move in enumerate(game.mainline_moves(), start=1):
                 try:
-                    board.push(node.move)
+                    board.push(move)
                 except ValueError:
                     break
 
+                # Only consider positions at or after MIN_PLY (skip opening).
                 if move_num < MIN_PLY:
                     continue
 
-                # Count pieces
+                # Piece count must be within [MIN_PIECES, MAX_PIECES].
                 piece_count = bin(board.occupied).count("1")
-                if piece_count < MIN_PIECES or piece_count > MAX_PIECES:
+                if not MIN_PIECES <= piece_count <= MAX_PIECES:
                     continue
 
-                # Skip positions with very few legal moves (fast count)
+                # Skip positions with very few legal moves (fast count).
                 if board.legal_moves.count() < 5:
                     continue
 
-                extracted.append(board.fen())
+                game_positions.append(board.fen())
 
-            # Downsample periodically to keep memory usage reasonable
-            if len(extracted) > 80_000:
-                extracted = random.sample(extracted, 50_000)
+            # Take at most MAX_PER_GAME positions from each game so the
+            # database spreads across many games rather than a few long ones.
+            if len(game_positions) > MAX_PER_GAME:
+                game_positions = random.sample(game_positions, MAX_PER_GAME)
+
+            for fen in game_positions:
+                # Dedupe on the position itself, ignoring the move counters.
+                key = " ".join(fen.split(" ")[:4])
+                if key not in seen:
+                    seen.add(key)
+                    extracted.append(fen)
 
     if extracted:
         # Save to cache file for faster subsequent loads
